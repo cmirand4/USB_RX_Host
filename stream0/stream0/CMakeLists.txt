@@ -1,0 +1,1 @@
+include_directories("C:/Program Files (x86)/Cypress/Cypress USB Suite/CyAPI/inc") 

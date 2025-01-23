@@ -1,0 +1,6 @@
+1. Right-click your project in Solution Explorer
+2. Select Properties
+3. Navigate to C/C++ > General
+4. Add to "Additional Include Directories":
+   C:\Program Files (x86)\Cypress\Cypress USB Suite\CyAPI\inc
+   (or wherever your Cypress SDK is installed) 
