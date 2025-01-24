@@ -1,2 +1,3 @@
 ﻿  stream1.cpp
-  stream0.vcxproj -> C:\Users\cmirand4\Documents\GitHub\USB_RX_TX\stream0\stream0\x64\Debug\stream0.exe
+  LINK : C:\Users\cmirand4\Documents\GitHub\USB_RX_Host\stream0\stream0\x64\Debug\stream0.exe not found or not built by the last incremental link; performing full link
+  stream0.vcxproj -> C:\Users\cmirand4\Documents\GitHub\USB_RX_Host\stream0\stream0\x64\Debug\stream0.exe

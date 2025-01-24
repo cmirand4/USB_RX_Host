@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream0\\stream0\\",
+  "WorkspaceRootPath": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream0\\stream0\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream0\\stream0\\stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream0\\stream0\\stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|solutionrelative:stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -14,24 +14,24 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 1,
+          "SelectedChildIndex": 0,
           "Children": [
-            {
-              "$type": "Bookmark",
-              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
-            },
             {
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "stream1.cpp",
-              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream0\\stream0\\stream0\\stream1.cpp",
+              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream0\\stream0\\stream0\\stream1.cpp",
               "RelativeDocumentMoniker": "stream0\\stream1.cpp",
-              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream0\\stream0\\stream0\\stream1.cpp",
+              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream0\\stream0\\stream0\\stream1.cpp",
               "RelativeToolTip": "stream0\\stream1.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAK4AAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAAAlAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2024-12-10T22:28:20.031Z",
               "EditorCaption": ""
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
             }
           ]
         }
