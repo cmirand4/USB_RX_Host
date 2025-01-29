@@ -2,14 +2,15 @@
 #include <fstream>
 #include <vector>      // Include the vector header for std::vector
 #include <windows.h>
+#include <algorithm>   // Add this for std::min
 #include "CyAPI.h"     // Include Cypress CyAPI header for USB communication
 
 int main() {
     std::cout << "Starting program..." << std::endl;
     
-    const long KB_TO_TRANSFER = 100000;
+    const long KB_TO_TRANSFER = 100;
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
-    const long BUFFER_SIZE = 512 * 1024;  // 512 KB buffer
+    const long BUFFER_SIZE = 512 * 512;  // 512 KB buffer
     const int NUM_BUFFERS = 3;  // Triple buffering
     
     std::cout << "Creating USB device..." << std::endl;
@@ -86,17 +87,30 @@ int main() {
         try {
             std::cout << "Starting initial transfers..." << std::endl;
             for (int i = 0; i < NUM_BUFFERS; i++) {
-                bytesToTransfer = BUFFER_SIZE;  // Reset for each transfer
+                // Calculate remaining bytes for this transfer
+                bytesToTransfer = static_cast<long>(std::min<long long>(
+                    static_cast<long long>(BUFFER_SIZE), 
+                    static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
+                ));
+                if (bytesToTransfer <= 0) break;  // Stop if we've reached the total
+
                 if (!bulkInEndpoint->BeginDataXfer(buffers[i], bytesToTransfer, &ovLapArray[i])) {
                     throw std::runtime_error("Failed to begin data transfer");
                 }
-                std::cout << "Started transfer " << i << std::endl;
+                totalTransferred += bytesToTransfer;
+                std::cout << "Started transfer " << i << " with " << bytesToTransfer << " bytes" << std::endl;
             }
 
             std::cout << "Entering main transfer loop..." << std::endl;
+            totalTransferred = 0;  // Reset for actual transfers
             // Main transfer loop
             while (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
-                bytesToTransfer = BUFFER_SIZE;
+                // Calculate remaining bytes for this transfer
+                bytesToTransfer = static_cast<long>(std::min<long long>(
+                    static_cast<long long>(BUFFER_SIZE), 
+                    static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
+                ));
+                if (bytesToTransfer <= 0) break;  // Stop if we've reached the total
                 
                 std::cout << "Waiting for buffer " << currentBuffer << "..." << std::endl;
                 // Wait for current buffer to complete with timeout
@@ -133,15 +147,25 @@ int main() {
                         }
                     }
 
-                    std::cout << "Writing " << transferred << " bytes to file..." << std::endl;
-                    outFile.write(reinterpret_cast<char*>(buffers[currentBuffer]), transferred);
-                    totalTransferred += transferred;
+                    // Only write up to TOTAL_BYTES_TO_TRANSFER
+                    long bytesToWrite = static_cast<long>(std::min<long long>(
+                        static_cast<long long>(transferred), 
+                        static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
+                    ));
+                    std::cout << "Writing " << bytesToWrite << " bytes to file..." << std::endl;
+                    outFile.write(reinterpret_cast<char*>(buffers[currentBuffer]), bytesToWrite);
+                    totalTransferred += bytesToWrite;
 
-                    // Start next transfer
-                    bytesToTransfer = BUFFER_SIZE;
-                    if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], bytesToTransfer, 
-                        &ovLapArray[currentBuffer])) {
-                        throw std::runtime_error("Failed to begin next transfer");
+                    // Don't start a new transfer if we've reached the total
+                    if (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
+                        bytesToTransfer = static_cast<long>(std::min<long long>(
+                            static_cast<long long>(BUFFER_SIZE), 
+                            static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
+                        ));
+                        if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], bytesToTransfer, 
+                            &ovLapArray[currentBuffer])) {
+                            throw std::runtime_error("Failed to begin next transfer");
+                        }
                     }
                 }
 
