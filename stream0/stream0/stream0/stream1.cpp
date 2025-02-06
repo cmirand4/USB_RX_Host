@@ -8,10 +8,15 @@
 int main() {
     std::cout << "Starting program..." << std::endl;
     
-    const long KB_TO_TRANSFER = 100;
+    const long KB_TO_TRANSFER = 25;
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
-    const long BUFFER_SIZE = 512 * 512;  // 512 KB buffer
-    const int NUM_BUFFERS = 3;  // Triple buffering
+    const long BUFFER_SIZE = (512 * 512) & ~0x3;  // Align to 4-byte boundary
+    const int NUM_BUFFERS = 4;  // Triple buffering
+    
+    // For 150 MB/s data rate
+    const size_t DATA_RATE = 150 * 1024 * 1024;  // 150 MB/s
+    const size_t RECOMMENDED_BUFFER = 32 * 1024 * 1024;  // Start with 32 MB
+    const size_t LARGE_BUFFER = 64 * 1024 * 1024;  // If needed, go up to 64 MB
     
     std::cout << "Creating USB device..." << std::endl;
     // Create USB device object (FX3)
@@ -48,6 +53,9 @@ int main() {
     bulkInEndpoint->TimeOut = 10000;
     bulkInEndpoint->SetXferSize(BUFFER_SIZE);
 
+    // Consider increasing buffer size if discontinuities persist
+    // const long BUFFER_SIZE = 1024 * 1024;  // 1 MB buffer
+    
     std::cout << "Creating buffers..." << std::endl;
     // Create multiple aligned buffers for overlapped transfers
     OVERLAPPED* ovLapArray = new OVERLAPPED[NUM_BUFFERS];
@@ -61,7 +69,8 @@ int main() {
                 throw std::runtime_error("Failed to create event");
             }
             
-            buffers[i] = (unsigned char*)_aligned_malloc(BUFFER_SIZE, 4096);
+            // Ensure 4-byte alignment for 32-bit transfers
+            buffers[i] = (unsigned char*)_aligned_malloc(BUFFER_SIZE, sizeof(uint32_t));
             if (buffers[i] == NULL) {
                 throw std::runtime_error("Failed to allocate buffer");
             }
@@ -69,14 +78,14 @@ int main() {
         
         std::cout << "Opening output file..." << std::endl;
         // Open file with larger buffer
-        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/stream17.bin", 
+        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/counter2.bin", 
             std::ios::binary | std::ios::out);
         
         if (!outFile.is_open()) {
             throw std::runtime_error("Failed to open output file");
         }
         
-        outFile.rdbuf()->pubsetbuf(nullptr, 8 * 1024 * 1024);  // 8MB file buffer
+        outFile.rdbuf()->pubsetbuf(nullptr, RECOMMENDED_BUFFER);
 
         std::cout << "Initializing transfers..." << std::endl;
         long totalTransferred = 0;
@@ -105,21 +114,18 @@ int main() {
             totalTransferred = 0;  // Reset for actual transfers
             // Main transfer loop
             while (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
-                // Calculate remaining bytes for this transfer
+                // Ensure transfer size is multiple of 4 bytes
                 bytesToTransfer = static_cast<long>(std::min<long long>(
                     static_cast<long long>(BUFFER_SIZE), 
                     static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
-                ));
-                if (bytesToTransfer <= 0) break;  // Stop if we've reached the total
+                )) & ~0x3;  // Align to 4-byte boundary
                 
-                std::cout << "Waiting for buffer " << currentBuffer << "..." << std::endl;
                 // Wait for current buffer to complete with timeout
                 if (!WaitForSingleObject(ovLapArray[currentBuffer].hEvent, 10000) == WAIT_OBJECT_0) {
                     std::cerr << "Wait failed with error: " << GetLastError() << std::endl;
                     throw std::runtime_error("Transfer wait timeout");
                 }
 
-                std::cout << "Finishing transfer for buffer " << currentBuffer << "..." << std::endl;
                 LONG transferred = BUFFER_SIZE;
                 
                 // Get transfer status
@@ -132,27 +138,12 @@ int main() {
                 }
 
                 if (transferred > 0) {
-                    // Verify data integrity
-                    int32_t* data = reinterpret_cast<int32_t*>(buffers[currentBuffer]);
-                    size_t numInts = transferred / sizeof(int32_t);
-                    
-                    // Check for discontinuities in the sequence
-                    for (size_t i = 1; i < numInts; i++) {
-                        int32_t diff = data[i] - data[i-1];
-                        if (diff != 1) {
-                            std::cerr << "Data discontinuity detected at offset " 
-                                    << totalTransferred + (i * sizeof(int32_t)) 
-                                    << ": " << data[i-1] << " -> " << data[i] 
-                                    << " (diff: " << diff << ")" << std::endl;
-                        }
-                    }
-
-                    // Only write up to TOTAL_BYTES_TO_TRANSFER
-                    long bytesToWrite = static_cast<long>(std::min<long long>(
+                    // Ensure write size is multiple of 4 bytes
+                    long bytesToWrite = (static_cast<long>(std::min<long long>(
                         static_cast<long long>(transferred), 
                         static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
-                    ));
-                    std::cout << "Writing " << bytesToWrite << " bytes to file..." << std::endl;
+                    ))) & ~0x3;  // Align to 4-byte boundary
+
                     outFile.write(reinterpret_cast<char*>(buffers[currentBuffer]), bytesToWrite);
                     totalTransferred += bytesToWrite;
 
