@@ -8,14 +8,14 @@
 int main() {
     std::cout << "Starting program..." << std::endl;
     
-    const long KB_TO_TRANSFER = 25;
+    const long KB_TO_TRANSFER = 1000000;
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
     const long BUFFER_SIZE = (512 * 512) & ~0x3;  // Align to 4-byte boundary
-    const int NUM_BUFFERS = 4;  // Triple buffering
+    const int NUM_BUFFERS = 4;  // Increased from 2 to 4 for better buffering
     
     // For 150 MB/s data rate
     const size_t DATA_RATE = 150 * 1024 * 1024;  // 150 MB/s
-    const size_t RECOMMENDED_BUFFER = 32 * 1024 * 1024;  // Start with 32 MB
+    const size_t RECOMMENDED_BUFFER = 16 * 1024;  // 64 KB for more frequent writes
     const size_t LARGE_BUFFER = 64 * 1024 * 1024;  // If needed, go up to 64 MB
     
     std::cout << "Creating USB device..." << std::endl;
@@ -49,6 +49,9 @@ int main() {
     std::cout << "Max Packet Size: " << bulkInEndpoint->MaxPktSize << " bytes" << std::endl;
 
     std::cout << "Configuring endpoint..." << std::endl;
+    // Increase priority of this thread
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    
     // Configure for maximum performance
     bulkInEndpoint->TimeOut = 10000;
     bulkInEndpoint->SetXferSize(BUFFER_SIZE);
@@ -77,7 +80,7 @@ int main() {
         }
         
         std::cout << "Opening output file..." << std::endl;
-        // Open file with larger buffer
+        // Open file with smaller buffer for more frequent writes
         std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/counter2.bin", 
             std::ios::binary | std::ios::out);
         
@@ -145,6 +148,9 @@ int main() {
                     ))) & ~0x3;  // Align to 4-byte boundary
 
                     outFile.write(reinterpret_cast<char*>(buffers[currentBuffer]), bytesToWrite);
+                    if (totalTransferred % (8 * 1024 * 1024) == 0) {  // Flush every 8MB
+                        outFile.flush();
+                    }
                     totalTransferred += bytesToWrite;
 
                     // Don't start a new transfer if we've reached the total
