@@ -2,7 +2,7 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>C:\Users\cmirand4\Documents\GitHub\USB_RX_TX\stream1\x64\Debug\streamShow.exe</FullPath>
+      <FullPath>C:\Users\cmirand4\Documents\GitHub\USB_RX_Host\stream1\x64\Debug\streamShow.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

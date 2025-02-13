@@ -10,8 +10,11 @@
 int main() {
     try {
         DataStreamer streamer;
+        
+        // Specify the desired file size (e.g., 100MB)
+        const size_t TARGET_SIZE = 100 * 1024 * 1024;  // 100 MB
 
-        if (!streamer.Initialize()) {
+        if (!streamer.Initialize(TARGET_SIZE)) {
             std::cerr << "Failed to initialize streamer" << std::endl;
             return -1;
         }
@@ -21,10 +24,15 @@ int main() {
             return -1;
         }
 
-        // Wait for user input to stop
-        std::cout << "Press Enter to stop streaming..." << std::endl;
-        std::cin.get();
+        std::cout << "Streaming data... Target size: " << TARGET_SIZE / (1024*1024) << " MB" << std::endl;
+        std::cout << "Will automatically stop when target size is reached." << std::endl;
 
+        // Wait for completion
+        while (!streamer.IsComplete()) {
+            Sleep(100);  // Small delay to prevent CPU spinning
+        }
+
+        std::cout << "Target size reached. Stopping..." << std::endl;
         streamer.StopStreaming();
         return 0;
     }

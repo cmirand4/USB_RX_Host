@@ -5,15 +5,14 @@
 #include "CyAPI.h"     // Include Cypress CyAPI header for USB communication
 
 int main() {
-    const int PACKETS_PER_XFER = 512; // 512
-    const int BYTES_PER_PACKET = 1024;
-    const long BUFFER_SIZE = PACKETS_PER_XFER * BYTES_PER_PACKET; // 512 KB
-    const int NUM_XFERS = 2; // 64
-    const long KB_TO_TRANSFER = 10000;
-    const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
+    // Define the target size in kB (e.g., stop after transferring 1000 kB)
+    const long KB_TO_TRANSFER = 10000;//100000;  // Transfer 1 kB for testing
+    const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;  // Convert kB to bytes
+    const long BUFFER_SIZE = (512 * 512);  // Buffer size 
 
     // Create USB device object (FX3)
     CCyUSBDevice* USBDevice = new CCyUSBDevice(NULL);
+
     // Open the first available FX3 device
     if (!USBDevice->Open(0)) {
         std::cerr << "Failed to open USB device" << std::endl;
@@ -23,6 +22,7 @@ int main() {
     // Set the endpoint to use for Bulk transfer (Adjust endpoint number if necessary)
     CCyBulkEndPoint* bulkInEndpoint = USBDevice->BulkInEndPt;
     std::cout << "End point: " << bulkInEndpoint << " bytes." << std::endl;
+
     // Check if bulkInEndpoint is valid
     if (bulkInEndpoint == nullptr) {
         std::cerr << "No bulk IN endpoint found." << std::endl;
@@ -37,93 +37,66 @@ int main() {
     std::cout << "  Direction: " << (bulkInEndpoint->bIn ? "IN" : "OUT") << std::endl;
 
     // Configuring the Endpoint Transfer Size
-    bulkInEndpoint->SetXferSize(BUFFER_SIZE);
+    bulkInEndpoint->SetXferSize(BUFFER_SIZE);  // Set transfer size to 1 KB
 
     // Open a file to save the received data
     //std::ofstream outFile("C:/Users/Christopher/Documents/Prelim Voltage/streamTest/my_data_output.bin", std::ios::binary); // Lab
-    std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/stream12.bin", std::ios::binary); // Laptop
+    //std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/my_data_output.bin", std::ios::binary); // Laptop
+    std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/counter3.bin", std::ios::binary); // Laptop
     if (!outFile.is_open()) {
         std::cerr << "Failed to open output file for writing" << std::endl;
         return -1;
     }
 
-    // Prepare buffers and OVERLAPPED structures for asynchronous transfers
-    std::vector<unsigned char*> buffers(NUM_XFERS);
-    std::vector<OVERLAPPED> ovList(NUM_XFERS);
-    std::vector<UCHAR*> outContexts(NUM_XFERS, nullptr);
+    // Prepare a dynamic buffer to store received data
+    std::vector<unsigned char> dataBuffer;
+    const long BUFFER_THRESHOLD = 16 * 1024;  // threshold
+    dataBuffer.reserve(BUFFER_THRESHOLD);  // Reserve memory for threshold
 
-    for (int i = 0; i < NUM_XFERS; i++) {
-        buffers[i] = new unsigned char[BUFFER_SIZE];
-        memset(&ovList[i], 0, sizeof(OVERLAPPED));
-        ovList[i].hEvent = CreateEvent(NULL, false, false, NULL);
-        if (ovList[i].hEvent == NULL) {
-            std::cerr << "Failed to create event for transfer " << i << std::endl;
-            return -1;
-        }
-    }
+    unsigned char tempBuffer[BUFFER_SIZE];  // Temporary buffer for each transfer
+    long bytesToTransfer;
+    long transferredBytes;
+    long totalTransferred = 0;  // Variable to keep track of total bytes transferred
 
-    // Initially queue all transfers
-    for (int i = 0; i < NUM_XFERS; i++) {
-        LONG len = BUFFER_SIZE;
-        outContexts[i] = bulkInEndpoint->BeginDataXfer(buffers[i], len, &ovList[i]);
-        if (outContexts[i] == nullptr) {
-            std::cerr << "BeginDataXfer failed on xfer " << i << std::endl;
-            return -1;
-        }
-    }
-
-    long totalTransferred = 0;
-    int activeTransfers = NUM_XFERS;
     // Data streaming loop
-    while (totalTransferred < TOTAL_BYTES_TO_TRANSFER && activeTransfers > 0) {
-        // Wait for any transfer to complete
-        // We'll just loop through the ovList and check WaitForXfer on each
-        for (int i = 0; i < NUM_XFERS; i++) {
-            // Check if this transfer is complete
-            if (bulkInEndpoint->WaitForXfer(&ovList[i], 100000)) {
-                // Transfer is ready to finish
-                LONG len = BUFFER_SIZE;
-                if (bulkInEndpoint->FinishDataXfer(buffers[i], len, &ovList[i], outContexts[i])) {
-                    // Successful Transfer
-                    if (len > 0) {
-                        outFile.write(reinterpret_cast<char*>(buffers[i]), len);
-                        totalTransferred += len;
-                    }
+    while (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
+        bytesToTransfer = BUFFER_SIZE;  // Reset bytesToTransfer before each call
 
-                    // If we still need more data, re-queue the transfer
-                    if (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
-                        LONG reLen = BUFFER_SIZE;
-                        outContexts[i] = bulkInEndpoint->BeginDataXfer(buffers[i], reLen, &ovList[i]);
-                        if (outContexts[i] == nullptr) {
-                            std::cerr << "Re-queue BeginDataXfer failed" << std::endl;
-                            activeTransfers--;
-                        }
-                    }
-                    else {
-                        // No more data needed
-                        activeTransfers--;
-                    }
-                }
-                else {
-                    std::cerr << "FinishDataXfer failed on xfer " << i << std::endl;
-                    activeTransfers--;
-                }
+        // Perform the bulk transfer
+        bool success = bulkInEndpoint->XferData(tempBuffer, bytesToTransfer);
+
+        if (success && bytesToTransfer > 0) {
+            transferredBytes = bytesToTransfer;
+
+            // Append to dataBuffer
+            dataBuffer.insert(dataBuffer.end(), tempBuffer, tempBuffer + transferredBytes);
+
+            // Update counters
+            totalTransferred += transferredBytes;
+
+            // Write to file if buffer reaches threshold
+            if (dataBuffer.size() >= BUFFER_THRESHOLD) {
+                outFile.write(reinterpret_cast<char*>(dataBuffer.data()), dataBuffer.size());
+                dataBuffer.clear();
+                dataBuffer.reserve(BUFFER_THRESHOLD);  // Re-reserve memory after clearing
             }
-            else
-            {
-                //std::cerr << "WaitForXfer timed out"<< std::endl;
-                //return -1; // WaitForXfer timed out, you can handle this if needed or continue
-            }
-            if (totalTransferred >= TOTAL_BYTES_TO_TRANSFER)
-                break;
+
+            // Output progress (optional)
+            // std::cout << "Transferred " << transferredBytes << " bytes. Total: " << totalTransferred << " bytes" << std::endl;
+        }
+        else {
+            std::cerr << "Data transfer failed" << std::endl;
+            break;
         }
     }
-    std::cout << "Transfer complete. Total bytes transferred: " << totalTransferred << " bytes." << std::endl;
-    // Cleanup
-    for (int i = 0; i < NUM_XFERS; i++) {
-        delete[] buffers[i];
-        CloseHandle(ovList[i].hEvent);
+
+    // Write any remaining data
+    if (!dataBuffer.empty()) {
+        outFile.write(reinterpret_cast<char*>(dataBuffer.data()), dataBuffer.size());
     }
+
+    // Clean up
+    // std::cout << "Transfer complete. Total bytes transferred: " << totalTransferred << " bytes." << std::endl;
     outFile.close();
     USBDevice->Close();
     delete USBDevice;

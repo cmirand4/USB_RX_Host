@@ -1,14 +1,14 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\",
+  "WorkspaceRootPath": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{2F68385B-C3E9-4AA1-BAD1-3314A38A842B}|streamShow\\streamShow.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\streamShow\\streamShow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{2F68385B-C3E9-4AA1-BAD1-3314A38A842B}|streamShow\\streamShow.vcxproj|solutionrelative:streamShow\\streamShow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|solutionrelative:stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{5C8815C2-4D0F-4EE8-B9A2-FAD93B59560F}|stream0\\stream0.vcxproj|solutionrelative:stream0\\stream1.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{2F68385B-C3E9-4AA1-BAD1-3314A38A842B}|streamShow\\streamShow.vcxproj|C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\streamShow\\streamShow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{2F68385B-C3E9-4AA1-BAD1-3314A38A842B}|streamShow\\streamShow.vcxproj|solutionrelative:streamShow\\streamShow.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -18,30 +18,34 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 2,
           "Children": [
             {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
+            },
+            {
               "$type": "Document",
-              "DocumentIndex": 0,
+              "DocumentIndex": 1,
               "Title": "streamShow.cpp",
-              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\streamShow\\streamShow.cpp",
+              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\streamShow\\streamShow.cpp",
               "RelativeDocumentMoniker": "streamShow\\streamShow.cpp",
-              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\streamShow\\streamShow.cpp",
+              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\streamShow\\streamShow.cpp",
               "RelativeToolTip": "streamShow\\streamShow.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAABgAAAABAAAAAAAAAA==",
+              "ViewState": "AgIAAGMAAAAAAAAAAAAAABgAAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2025-01-03T19:23:22.856Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 0,
               "Title": "stream1.cpp",
-              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\stream0\\stream1.cpp",
+              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\stream0\\stream1.cpp",
               "RelativeDocumentMoniker": "stream0\\stream1.cpp",
-              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_TX\\stream1\\stream0\\stream1.cpp",
+              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream1\\stream0\\stream1.cpp",
               "RelativeToolTip": "stream0\\stream1.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAoAAAAiAAAAAAAAAA==",
+              "ViewState": "AgIAACoAAAAAAAAAAAAAADQAAAAiAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2024-12-10T22:22:33.557Z",
               "EditorCaption": ""

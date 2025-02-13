@@ -30,11 +30,24 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 2,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Bookmark",
               "Name": "ST:0:0:{cce594b6-0c39-4442-ba28-10c64ac7e89f}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "DataStreamer.cpp",
+              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream2_mt\\stream2_mt\\src\\DataStreamer.cpp",
+              "RelativeDocumentMoniker": "stream2_mt\\src\\DataStreamer.cpp",
+              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream2_mt\\stream2_mt\\src\\DataStreamer.cpp",
+              "RelativeToolTip": "stream2_mt\\src\\DataStreamer.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAABYAAAAfAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2025-02-11T19:07:54.112Z",
+              "EditorCaption": ""
             },
             {
               "$type": "Document",
@@ -46,21 +59,7 @@
               "RelativeToolTip": "stream2_mt\\src\\main.cpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAYAAAAkAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-02-11T18:29:22.803Z",
-              "EditorCaption": ""
-            },
-            {
-              "$type": "Document",
-              "DocumentIndex": 0,
-              "Title": "DataStreamer.cpp",
-              "DocumentMoniker": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream2_mt\\stream2_mt\\src\\DataStreamer.cpp",
-              "RelativeDocumentMoniker": "stream2_mt\\src\\DataStreamer.cpp",
-              "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream2_mt\\stream2_mt\\src\\DataStreamer.cpp",
-              "RelativeToolTip": "stream2_mt\\src\\DataStreamer.cpp",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAkAAAABAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-02-11T19:07:54.112Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-02-11T18:29:22.803Z"
             },
             {
               "$type": "Document",
@@ -72,8 +71,7 @@
               "RelativeToolTip": "stream2_mt\\src\\BufferManager.cpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAD0AAAABAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2025-02-11T19:07:11.519Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-02-11T19:07:11.519Z"
             },
             {
               "$type": "Document",
@@ -85,8 +83,7 @@
               "RelativeToolTip": "stream2_mt\\include\\BufferManager.h",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAsAAAACAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
-              "WhenOpened": "2025-02-11T18:28:16.6Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-02-11T18:28:16.6Z"
             },
             {
               "$type": "Document",
@@ -96,7 +93,7 @@
               "RelativeDocumentMoniker": "stream2_mt\\include\\DataStreamer.h",
               "ToolTip": "C:\\Users\\cmirand4\\Documents\\GitHub\\USB_RX_Host\\stream2_mt\\stream2_mt\\include\\DataStreamer.h",
               "RelativeToolTip": "stream2_mt\\include\\DataStreamer.h",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEEAAAACAAAAAAAAAA==",
+              "ViewState": "AgIAAAYAAAAAAAAAAAAAAEIAAAACAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000680|",
               "WhenOpened": "2025-02-11T18:27:18.056Z",
               "EditorCaption": ""

@@ -8,7 +8,7 @@
 int main() {
     std::cout << "Starting program..." << std::endl;
     
-    const long KB_TO_TRANSFER = 1000000;
+    const long KB_TO_TRANSFER = 10000;
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
     const long BUFFER_SIZE = (512 * 512) & ~0x3;  // Align to 4-byte boundary
     const int NUM_BUFFERS = 4;  // Increased from 2 to 4 for better buffering
@@ -81,7 +81,7 @@ int main() {
         
         std::cout << "Opening output file..." << std::endl;
         // Open file with smaller buffer for more frequent writes
-        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/counter2.bin", 
+        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/camera0.bin", 
             std::ios::binary | std::ios::out);
         
         if (!outFile.is_open()) {

@@ -7,6 +7,8 @@ DataStreamer::DataStreamer()
     : m_usbDevice(nullptr)
     , m_bulkEndpoint(nullptr)
     , m_running(false)
+    , m_targetBytes(0)
+    , m_totalBytesWritten(0)
 {
 }
 
@@ -14,7 +16,10 @@ DataStreamer::~DataStreamer() {
     StopStreaming();
 }
 
-bool DataStreamer::Initialize() {
+bool DataStreamer::Initialize(size_t totalBytes) {
+    m_targetBytes = totalBytes;
+    m_totalBytesWritten = 0;
+    
     // Create USB device object
     m_usbDevice = std::make_unique<CCyUSBDevice>(nullptr);
 
@@ -186,14 +191,27 @@ void DataStreamer::DiskWriterThread() {
             continue;
         }
 
-        m_outFile.write(reinterpret_cast<char*>(buffer->data.get()), buffer->bytesUsed);
-        bytesWrittenSinceFlush += buffer->bytesUsed;
+        // Check if writing this buffer would exceed the target size
+        size_t remainingBytes = m_targetBytes - m_totalBytesWritten;
+        size_t bytesToWrite = std::min<size_t>(buffer->bytesUsed, remainingBytes);
 
-        if (bytesWrittenSinceFlush >= FLUSH_THRESHOLD) {
-            m_outFile.flush();
-            bytesWrittenSinceFlush = 0;
+        if (bytesToWrite > 0) {
+            m_outFile.write(reinterpret_cast<char*>(buffer->data.get()), bytesToWrite);
+            bytesWrittenSinceFlush += bytesToWrite;
+            m_totalBytesWritten += bytesToWrite;
+
+            if (bytesWrittenSinceFlush >= FLUSH_THRESHOLD) {
+                m_outFile.flush();
+                bytesWrittenSinceFlush = 0;
+            }
         }
 
         m_bufferManager->ReturnEmptyBuffer(buffer);
+
+        // Stop if we've reached the target size
+        if (m_totalBytesWritten >= m_targetBytes) {
+            m_running = false;
+            break;
+        }
     }
 }

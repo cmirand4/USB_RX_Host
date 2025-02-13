@@ -22,6 +22,7 @@
 #include <thread>
 #include <memory>
 #include <fstream>
+#include <atomic>
 
 class BufferManager;
 
@@ -30,9 +31,10 @@ public:
     DataStreamer();
     ~DataStreamer();
 
-    bool Initialize();
+    bool Initialize(size_t totalBytes);
     bool StartStreaming();
     void StopStreaming();
+    bool IsComplete() const { return m_totalBytesWritten >= m_targetBytes; }
 
 private:
     void UsbReaderThread();
@@ -47,7 +49,7 @@ private:
     std::unique_ptr<std::thread> m_writerThread;
     std::mutex m_mutex;
     std::condition_variable m_dataReady;
-    bool m_running;
+    std::atomic<bool> m_running;
 
     // Buffer management
     std::unique_ptr<BufferManager> m_bufferManager;
@@ -62,5 +64,6 @@ private:
     static constexpr DWORD USB_TIMEOUT = 10000;  // 10 second timeout
     
     // Track total bytes transferred
-    size_t m_totalTransferred;
+    size_t m_targetBytes;
+    std::atomic<size_t> m_totalBytesWritten;
 };
