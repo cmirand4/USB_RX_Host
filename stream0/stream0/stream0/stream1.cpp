@@ -8,13 +8,13 @@
 int main() {
     std::cout << "Starting program..." << std::endl;
     
-    const long KB_TO_TRANSFER = 10000;
+    const long KB_TO_TRANSFER = 144; // Exactly 3 buffers worth of data
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
-    const long BUFFER_SIZE = (512 * 512) & ~0x3;  // Align to 4-byte boundary
-    const int NUM_BUFFERS = 4;  // Increased from 2 to 4 for better buffering
+    const long BUFFER_SIZE = 49152;  // Match firmware buffer size
+    const int NUM_BUFFERS = 2;  // Match firmware number of buffers 
     
     // For 150 MB/s data rate
-    const size_t DATA_RATE = 150 * 1024 * 1024;  // 150 MB/s
+    const size_t DATA_RATE = 297 * 1024 * 1024;  // 150 MB/s
     const size_t RECOMMENDED_BUFFER = 16 * 1024;  // 64 KB for more frequent writes
     const size_t LARGE_BUFFER = 64 * 1024 * 1024;  // If needed, go up to 64 MB
     
@@ -53,7 +53,7 @@ int main() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     
     // Configure for maximum performance
-    bulkInEndpoint->TimeOut = 10000;
+    bulkInEndpoint->TimeOut = 1000;
     bulkInEndpoint->SetXferSize(BUFFER_SIZE);
 
     // Consider increasing buffer size if discontinuities persist
@@ -81,7 +81,7 @@ int main() {
         
         std::cout << "Opening output file..." << std::endl;
         // Open file with smaller buffer for more frequent writes
-        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/camera0.bin", 
+        std::ofstream outFile("C:/Users/cmirand4/Documents/MATLAB/VI_Data/streamTest/counter4.bin", 
             std::ios::binary | std::ios::out);
         
         if (!outFile.is_open()) {
