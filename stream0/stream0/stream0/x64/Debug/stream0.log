@@ -1,3 +1,3 @@
 ﻿  stream1.cpp
-C:\Users\Christopher\Documents\GitHub\USB_RX_Host\stream0\stream0\stream0\stream1.cpp(431,42): warning C4101: 'e': unreferenced local variable
+C:\Users\Christopher\Documents\GitHub\USB_RX_Host\stream0\stream0\stream0\stream1.cpp(436,42): warning C4101: 'e': unreferenced local variable
   stream0.vcxproj -> C:\Users\Christopher\Documents\GitHub\USB_RX_Host\stream0\stream0\x64\Debug\stream0.exe

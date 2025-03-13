@@ -1,0 +1,7 @@
+2025-03-04 15:45:13 - === Starting USB Transfer Session ===
+2025-03-04 15:45:13 - Buffer Size: 65536 bytes
+2025-03-04 15:45:13 - Number of Buffers: 8
+2025-03-04 15:45:13 - Total Bytes to Transfer: 102367232
+2025-03-04 15:45:13 - Set process priority to HIGH_PRIORITY_CLASS
+2025-03-04 15:45:13 - Started watchdog thread
+2025-03-04 15:45:13 - Set main thread priority to THREAD_PRIORITY_TIME_CRITICAL
