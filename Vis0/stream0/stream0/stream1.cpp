@@ -1,16 +1,20 @@
 #include <iostream>
 #include <fstream>
-#include <vector>      // Include the vector header for std::vector
+#include <vector>
 #include <windows.h>
-#include <algorithm>   // Add this for std::min
-#include "CyAPI.h"     // Include Cypress CyAPI header for USB communication
-#include <thread>      // For std::thread
-#include <atomic>      // For std::atomic
-#include <chrono>      // For std::chrono
-#include <bitset>      // For bit manipulation
-#include <string>      // For string operations
-#include <map>         // For mapping codes to patterns
-#include <set>         // For set operations (intersect)
+#include <algorithm>
+#include "CyAPI.h"
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <bitset>
+#include <string>
+#include <map>
+#include <set>
+#include <iomanip>
+#include <sstream>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
 
 // Global variables for watchdog
 std::atomic<bool> g_programRunning(true);
@@ -26,12 +30,89 @@ CCyBulkEndPoint* g_bulkInEndpoint = nullptr;  // Global pointer to the endpoint
 const long BUFFER_SIZE = 65280;  // 60KB = 4 * 61440 bytes (multiple of 16KB)
 const int NUM_BUFFERS = 3;       // 3 buffers * 61440 bytes =  bytes (~191.25KB total)
 const DWORD FX3_BUFFER_TIMEOUT = 1000;  // Longer timeout for initial transfers
-const size_t ANALYSIS_BUFFER_SIZE = 10 * 1024 * 1024; // 2 MB for analysis
+const size_t ANALYSIS_BUFFER_SIZE = 2 * 1024 * 1024; // 2 MB for analysis
 
 // Global buffer to store received data for analysis
 std::vector<unsigned char> g_analysisBuffer;
 
+// Add these declarations near the top, before any function definitions
+std::vector<bool> createSAVPattern();
+std::vector<bool> createEAVPattern();
+std::vector<bool> createSAVIPattern();
+std::vector<bool> createEAVIPattern();
+struct VideoLine;  // Forward declaration
+struct VideoFrame; // Forward declaration
+
 // Helper functions for data analysis
+std::vector<bool> createSAVPattern();  // Add these declarations
+std::vector<bool> createEAVPattern();  // near the other function declarations
+
+// Add this forward declaration near the top of the file, with the other forward declarations
+void applyAdaptiveHistogramEqualization(BYTE* imageData, int width, int height, int tileSize);
+
+// Implement a grayscale-specific adaptive histogram equalization
+void applyHistogramEqualization(BYTE* grayImageData, int width, int height) {
+    if (!grayImageData || width <= 0 || height <= 0) return;
+    
+    // Create temporary buffer for the processed image
+    BYTE* equalizedImage = new BYTE[width * height];
+    memset(equalizedImage, 0, width * height);
+    
+    // Define tile size for adaptive processing
+    const int tileSize = 32; // Can be adjusted based on image details
+    const int numTilesX = (width + tileSize - 1) / tileSize;
+    const int numTilesY = (height + tileSize - 1) / tileSize;
+    
+    // Process each tile separately
+    for (int tileY = 0; tileY < numTilesY; tileY++) {
+        for (int tileX = 0; tileX < numTilesX; tileX++) {
+            // Tile boundaries
+            int startX = tileX * tileSize;
+            int startY = tileY * tileSize;
+            int endX = (startX + tileSize < width) ? (startX + tileSize) : width;
+            int endY = (startY + tileSize < height) ? (startY + tileSize) : height;
+            
+            // Calculate histogram for this tile
+            int histogram[256] = {0};
+            for (int y = startY; y < endY; y++) {
+                for (int x = startX; x < endX; x++) {
+                    histogram[grayImageData[y * width + x]]++;
+                }
+            }
+            
+            // Calculate cumulative distribution function (CDF)
+            int cdf[256] = {0};
+            cdf[0] = histogram[0];
+            for (int i = 1; i < 256; i++) {
+                cdf[i] = cdf[i - 1] + histogram[i];
+            }
+            
+            // Skip empty tiles
+            if (cdf[255] == 0) continue;
+            
+            // Normalize CDF to create lookup table
+            float scale = 255.0f / cdf[255];
+            BYTE lut[256] = {0};
+            for (int i = 0; i < 256; i++) {
+                int value = static_cast<int>(cdf[i] * scale);
+                lut[i] = (value > 255) ? 255 : static_cast<BYTE>(value);
+            }
+            
+            // Apply equalization to this tile
+            for (int y = startY; y < endY; y++) {
+                for (int x = startX; x < endX; x++) {
+                    equalizedImage[y * width + x] = lut[grayImageData[y * width + x]];
+                }
+            }
+        }
+    }
+    
+    // Copy the equalized image back to the original buffer
+    memcpy(grayImageData, equalizedImage, width * height);
+    
+    // Clean up
+    delete[] equalizedImage;
+}
 
 // Convert a hex string to a vector of bits
 std::vector<bool> hexToBinaryVector(const std::string& hexStr, int numBits) {
@@ -51,65 +132,49 @@ std::vector<bool> getCode(const std::string& code) {
     
     if (code == "sav") {
         // SAV: Start of Active Video (0x80)
-        result = {1, 0, 0, 0, 0, 0, 0, 0};
+        result = {1, 0, 0, 0, 0, 0, 0, 0};  // 0x80
     } else if (code == "savi") {
-        // SAVI: Start of Active Video Invalid (0xC0)
-        result = {1, 1, 0, 0, 0, 0, 0, 0};
+        // SAVI: Start of Active Video Invalid (0xAB)
+        result = {1, 0, 1, 0, 1, 0, 1, 1};  // 0xAB
     } else if (code == "eav") {
         // EAV: End of Active Video (0x9D)
-        result = {1, 0, 0, 1, 1, 1, 0, 1};
+        result = {1, 0, 0, 1, 1, 1, 0, 1};  // 0x9D
     } else if (code == "eavi") {
-        // EAVI: End of Active Video Invalid (0xDD)
-        result = {1, 1, 0, 1, 1, 1, 0, 1};
+        // EAVI: End of Active Video Invalid (0xB6)
+        result = {1, 0, 1, 1, 0, 1, 1, 0};  // 0xB6
     }
     
     return result;
 }
 
 // Convert uint32 data to bits with specified endianness (optimized version)
-std::vector<bool> lookAtBits(const std::vector<uint32_t>& data, bool useGPU, const std::string& endian, bool verbose, const std::string& bitDepth) {
-    // Determine bit size based on bit depth
-    int numBits = 32; // Default for uint32
-    if (bitDepth == "uint8") {
-        numBits = 8;
-    } else if (bitDepth == "uint16") {
-        numBits = 16;
-    }
+std::vector<uint8_t> lookAtBits(const std::vector<uint32_t>& data, bool useGPU, 
+                               const std::string& endian, bool vector, const std::string& bitDepth) {
+    // Determine number of bits based on bitDepth
+    int numBits = 32;  // For uint32
+    if (bitDepth == "uint16") numBits = 16;
+    else if (bitDepth == "uint8") numBits = 8;
     
-    // Pre-allocate the result vector with exact size to avoid any reallocations
-    size_t totalBits = data.size() * numBits;
-    std::vector<bool> bits(totalBits); // Create with exact size
-    
-    if (verbose) {
-        std::cout << "Converting " << data.size() << " elements to " << totalBits << " bits..." << std::endl;
-    }
-    
-    // Process all elements at once with direct indexing for better performance
-    if (endian == "little") {
-        // Little endian: LSB first
-        #pragma omp parallel for if(data.size() > 10000) // Use OpenMP for large datasets
-        for (int i = 0; i < data.size(); ++i) {
-            uint32_t value = data[i];
-            size_t baseIdx = i * numBits;
-            
-            for (int bit = 0; bit < numBits; ++bit) {
-                bits[baseIdx + bit] = (value >> bit) & 1;
-            }
-        }
+    // Create bit order array based on endianness
+    std::vector<int> bitOrder(numBits);
+    if (endian == "big") {
+        for (int i = 0; i < numBits; i++) bitOrder[i] = numBits - i;
     } else {
-        // Big endian: MSB first
-        #pragma omp parallel for if(data.size() > 10000) // Use OpenMP for large datasets
-        for (int i = 0; i < data.size(); ++i) {
+        for (int i = 0; i < numBits; i++) bitOrder[i] = i + 1;
+    }
+    
+    // Process each element for each bit position (like MATLAB's bitget)
+    std::vector<uint8_t> result;
+    result.reserve(data.size() * numBits);
+    
+    for (size_t i = 0; i < data.size(); i++) {
             uint32_t value = data[i];
-            size_t baseIdx = i * numBits;
-            
-            for (int bit = 0; bit < numBits; ++bit) {
-                bits[baseIdx + bit] = (value >> (numBits - 1 - bit)) & 1;
-            }
+        for (int bit = 0; bit < numBits; bit++) {
+            result.push_back((value >> (bitOrder[bit] - 1)) & 1);
         }
     }
     
-    return bits;
+    return result;
 }
 
 // Find pattern in bit stream (similar to MATLAB's strfind)
@@ -227,21 +292,636 @@ void matchIdxs(std::vector<size_t>& start, std::vector<size_t>& stop) {
     stop = newStop;
 }
 
-// Analyze the collected data for patterns
-void analyzeData(bool quickAnalysis = false) {
-    std::cout << "\n=== Starting Data Analysis ===\n" << std::endl;
+// New function to find initial sync pattern across all channels
+std::vector<size_t> findInitialSync(const std::vector<std::vector<bool>>& channels, 
+                                   const std::vector<bool>& savPattern) {
+    const size_t numChannels = channels.size();
+    if (numChannels != 4) return {};
+
+    std::cout << "\nSearching for initial sync pattern..." << std::endl;
+    std::cout << "Pattern length: " << savPattern.size() << " bits" << std::endl;
+    std::cout << "Looking in " << channels[0].size() << " bits per channel" << std::endl;
+
+    // Search first channel for SAV
+    std::vector<size_t> initialIndices;
+    size_t searchLimit = std::min<size_t>(channels[0].size() - savPattern.size(), 1000000);  // Limit initial search
     
-    // Set verbose mode for detailed progress reporting
-    bool verbose = true;
-    
-    if (quickAnalysis) {
-        std::cout << "Quick analysis mode enabled - skipping pattern search." << std::endl;
+    for (size_t i = 0; i <= searchLimit; i++) {
+        if (i % 1000000 == 0) {  // Progress update every million positions
+            std::cout << "Searching at position " << i << "..." << std::endl;
+        }
+        
+        bool match = true;
+        for (size_t j = 0; j < savPattern.size(); j++) {
+            if (channels[0][i + j] != savPattern[j]) {
+                match = false;
+                break;
+            }
+        }
+        
+        if (match) {
+            std::cout << "Found potential sync at position " << i << " in channel 1" << std::endl;
+            
+            // Print the matching bits
+            std::cout << "Matched pattern: ";
+            for (size_t j = 0; j < savPattern.size(); j++) {
+                std::cout << (channels[0][i + j] ? "1" : "0");
+                if ((j + 1) % 8 == 0) std::cout << " ";
+            }
+            std::cout << std::endl;
+            
+            // Verify this SAV exists at same position in all channels
+            bool allChannelsMatch = true;
+            for (size_t ch = 1; ch < numChannels; ch++) {
+                bool channelMatch = true;
+                for (size_t j = 0; j < savPattern.size(); j++) {
+                    if (channels[ch][i + j] != savPattern[j]) {
+                        channelMatch = false;
+                        break;
+                    }
+                }
+                if (!channelMatch) {
+                    std::cout << "Pattern mismatch in channel " << (ch + 1) << std::endl;
+                    allChannelsMatch = false;
+                    break;
+                }
+                std::cout << "Pattern matched in channel " << (ch + 1) << std::endl;
+            }
+            
+            if (allChannelsMatch) {
+                std::cout << "Found valid sync across all channels at position " << i << std::endl;
+                initialIndices.push_back(i);
+                break;
+            }
+        }
     }
     
-    // Variables (similar to MATLAB)
-    std::string bitDepthFX3 = "uint32";
-    std::string endian = "little";
-    bool useGPU = false;
+    return initialIndices;
+}
+
+// New function to validate and extract sync positions using known spacing
+std::vector<std::pair<size_t, size_t>> extractSyncPositions(
+    const std::vector<std::vector<bool>>& channels,
+    const std::vector<bool>& savPattern,
+    const std::vector<bool>& eavPattern,
+    size_t initialPos) {
+    
+    const size_t BITS_PER_BYTE = 8;
+    const size_t SYNC_SIZE = savPattern.size();
+    const size_t MIN_DATA_BYTES = 180;
+    const size_t MAX_DATA_BYTES = 186;  // Increased to 186 based on observed data
+    
+    std::vector<std::pair<size_t, size_t>> syncPairs;
+    size_t currentPos = initialPos;
+    size_t maxSearch = std::min<size_t>(channels[0].size(), 100000ULL);  // Limit search to first 100K positions
+    
+    while (currentPos < maxSearch) {
+        // Verify SAV at current position
+        bool validSAV = true;
+        for (const auto& channel : channels) {
+            for (size_t i = 0; i < savPattern.size(); i++) {
+                if (currentPos + i >= channel.size() || channel[currentPos + i] != savPattern[i]) {
+                    validSAV = false;
+                    break;
+                }
+            }
+            if (!validSAV) break;
+        }
+        
+        if (!validSAV) {
+            currentPos++;
+            continue;
+        }
+        
+        // Look for EAV
+        bool foundEAV = false;
+        size_t eavPos = 0;
+        
+        for (size_t dataBytes = MIN_DATA_BYTES; dataBytes <= MAX_DATA_BYTES; dataBytes++) {
+            size_t testPos = currentPos + (dataBytes * BITS_PER_BYTE);
+            if (testPos + eavPattern.size() > channels[0].size()) break;
+            
+            bool validAtPos = true;
+            for (const auto& channel : channels) {
+                for (size_t i = 0; i < eavPattern.size(); i++) {
+                    if (channel[testPos + i] != eavPattern[i]) {
+                        validAtPos = false;
+                        break;
+                    }
+                }
+                if (!validAtPos) break;
+            }
+            
+            if (validAtPos) {
+                foundEAV = true;
+                eavPos = testPos;
+                break;
+            }
+        }
+        
+        if (foundEAV) {
+            syncPairs.push_back({currentPos, eavPos});
+            currentPos = eavPos + eavPattern.size();  // Skip to after this EAV
+        } else {
+            currentPos++;  // No EAV found, try next position
+        }
+        
+        // Print progress every 10000 positions
+        if (syncPairs.size() % 10 == 0) {
+            std::cout << "Found " << syncPairs.size() << " valid lines so far..." << std::endl;
+        }
+    }
+    
+    return syncPairs;
+}
+
+// Add these new structures to help organize frame data
+struct VideoLine {
+    std::vector<uint8_t> channel1;
+    std::vector<uint8_t> channel2;
+    std::vector<uint8_t> channel3;
+    std::vector<uint8_t> channel4;
+    std::vector<uint8_t> interleavedData;
+    size_t startIndex;
+    size_t endIndex;
+};
+
+struct VideoFrame {
+    std::vector<VideoLine> lines;
+    int frameNumber;
+};
+
+// Add these global variables for the display window
+HWND g_displayWindow = NULL;
+HDC g_memoryDC = NULL;
+HBITMAP g_memoryBitmap = NULL;
+BYTE* g_displayBuffer = NULL;
+int g_currentWidth = 0;
+int g_currentHeight = 0;
+bool g_displayInitialized = false;
+
+// Create a window to display frames
+bool InitializeDisplayWindow() {
+    // Register window class
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSA wc = {0};
+        wc.lpfnWndProc = [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT {
+            switch (msg) {
+                case WM_CLOSE:
+                    DestroyWindow(hwnd);
+                    return 0;
+                case WM_DESTROY:
+                    PostQuitMessage(0);
+                    return 0;
+                case WM_PAINT: {
+                    PAINTSTRUCT ps;
+                    HDC hdc = BeginPaint(hwnd, &ps);
+                    
+                    if (g_memoryDC && g_memoryBitmap && g_displayBuffer) {
+                        BitBlt(hdc, 0, 0, g_currentWidth, g_currentHeight, g_memoryDC, 0, 0, SRCCOPY);
+                    }
+                    
+                    EndPaint(hwnd, &ps);
+                    return 0;
+                }
+                default:
+                    return DefWindowProcA(hwnd, msg, wParam, lParam);
+            }
+        };
+        wc.lpszClassName = "FrameViewerClass";
+        wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+        wc.style = CS_HREDRAW | CS_VREDRAW;
+        RegisterClassA(&wc);
+        registered = true;
+    }
+    
+    // Create window
+    g_displayWindow = CreateWindowA(
+        "FrameViewerClass", "Video Frame Viewer",
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+        NULL, NULL, GetModuleHandle(NULL), NULL
+    );
+    
+    if (!g_displayWindow) {
+        std::cout << "Failed to create display window" << std::endl;
+        return false;
+    }
+    
+    ShowWindow(g_displayWindow, SW_SHOW);
+    UpdateWindow(g_displayWindow);
+    
+    g_displayInitialized = true;
+    return true;
+}
+
+// Clean up display resources
+void CleanupDisplay() {
+    if (g_memoryBitmap) {
+        DeleteObject(g_memoryBitmap);
+        g_memoryBitmap = NULL;
+        // g_displayBuffer is managed by g_memoryBitmap, so don't delete it separately
+        g_displayBuffer = NULL;
+    }
+    
+    if (g_memoryDC) {
+        DeleteDC(g_memoryDC);
+        g_memoryDC = NULL;
+    }
+    
+    if (g_displayWindow) {
+        DestroyWindow(g_displayWindow);
+        g_displayWindow = NULL;
+    }
+    
+    g_displayInitialized = false;
+}
+
+// Modify the displayFrameImage function to use the correct pixel count
+void displayFrameImage(const VideoFrame& frame, int frameNumber) {
+    if (frame.lines.empty()) {
+        std::cout << "Cannot display empty frame" << std::endl;
+        return;
+    }
+    
+    // Use the proper calculation for pixel count - 178 bytes per channel × 4 channels = 712 pixels
+    const int bytesPerChannel = 178; // From SAV/EAV analysis (1488 bits / 8 = 186 bytes, minus sync = 178)
+    const int width = bytesPerChannel * 4; // All 4 channels interleaved = 712 pixels
+    
+    // Calculate image dimensions
+    int height = static_cast<int>(frame.lines.size());
+    
+    if (width == 0) {
+        std::cout << "Warning: Line has no data, cannot create image" << std::endl;
+        return;
+    }
+    
+    std::cout << "Displaying Frame " << frameNumber 
+              << " (" << width << "x" << height << ") with all 4 channels interleaved" << std::endl;
+    
+    // Initialize display window if needed
+    if (!g_displayInitialized) {
+        if (!InitializeDisplayWindow()) {
+            return;
+        }
+    }
+    
+    // Check if we need to recreate the bitmap (if dimensions changed)
+    if (g_currentWidth != width || g_currentHeight != height) {
+        // Clean up existing resources
+        if (g_memoryBitmap) {
+            DeleteObject(g_memoryBitmap);
+            g_memoryBitmap = NULL;
+            g_displayBuffer = NULL;
+        }
+        
+        if (g_memoryDC) {
+            DeleteDC(g_memoryDC);
+            g_memoryDC = NULL;
+        }
+        
+        // Create new resources
+        HDC windowDC = GetDC(g_displayWindow);
+        g_memoryDC = CreateCompatibleDC(windowDC);
+        
+        // Allocate memory for BITMAPINFO with space for 256 palette entries
+        BITMAPINFO* pBmi = (BITMAPINFO*)malloc(sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD));
+        if (!pBmi) {
+            std::cout << "Failed to allocate memory for BITMAPINFO" << std::endl;
+            return;
+        }
+
+        // Zero out the entire structure
+        memset(pBmi, 0, sizeof(BITMAPINFOHEADER) + 256 * sizeof(RGBQUAD));
+
+        // Initialize the header
+        pBmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        pBmi->bmiHeader.biWidth = static_cast<LONG>(width);
+        pBmi->bmiHeader.biHeight = -static_cast<LONG>(height); // Negative for top-down
+        pBmi->bmiHeader.biPlanes = 1;
+        pBmi->bmiHeader.biBitCount = 8; // 8-bit grayscale
+        pBmi->bmiHeader.biCompression = BI_RGB;
+
+        // Set up a grayscale palette
+        for (int i = 0; i < 256; i++) {
+            pBmi->bmiColors[i].rgbBlue = pBmi->bmiColors[i].rgbGreen = pBmi->bmiColors[i].rgbRed = static_cast<BYTE>(i);
+            pBmi->bmiColors[i].rgbReserved = 0;
+        }
+        
+        // Use pBmi instead of &bmi in CreateDIBSection
+        g_memoryBitmap = CreateDIBSection(windowDC, pBmi, DIB_RGB_COLORS, 
+                                         (void**)&g_displayBuffer, NULL, 0);
+        
+        // Free the memory when done
+        free(pBmi);
+        
+        SelectObject(g_memoryDC, g_memoryBitmap);
+        
+        g_currentWidth = static_cast<int>(width);
+        g_currentHeight = static_cast<int>(height);
+        
+        // Resize window to fit the image
+        RECT windowRect, clientRect;
+        GetWindowRect(g_displayWindow, &windowRect);
+        GetClientRect(g_displayWindow, &clientRect);
+        
+        int borderWidth = (windowRect.right - windowRect.left) - clientRect.right;
+        int borderHeight = (windowRect.bottom - windowRect.top) - clientRect.bottom;
+        
+        SetWindowPos(g_displayWindow, NULL, 0, 0, 
+                    static_cast<int>(width) + borderWidth, 
+                    static_cast<int>(height) + borderHeight, 
+                    SWP_NOMOVE | SWP_NOZORDER);
+    }
+    
+    // Update window title with frame info
+    std::string title = "Frame " + std::to_string(frameNumber) + 
+                        " (" + std::to_string(width) + "x" + std::to_string(height) + ")";
+    SetWindowTextA(g_displayWindow, title.c_str());
+    
+    // Fill bitmap data from frame - use all 4 channels interleaved
+    if (g_displayBuffer) {
+        ZeroMemory(g_displayBuffer, width * height);
+        
+        for (int y = 0; y < height; y++) {
+            if (y >= static_cast<int>(frame.lines.size())) break;
+            
+            const auto& line = frame.lines[static_cast<size_t>(y)];
+            
+            // Check if we have all channel data
+            if (line.channel1.empty() || line.channel2.empty() || 
+                line.channel3.empty() || line.channel4.empty()) {
+                continue;  // Skip if any channel is missing
+            }
+            
+            // Use proper channel data for each pixel in the interleaved format
+            for (int x = 0; x < bytesPerChannel; x++) {
+                if (x >= line.channel1.size()) break;
+                
+                // Use all 4 channels to fill the pixels
+                g_displayBuffer[y * width + (x * 4)]     = line.channel1[x];
+                g_displayBuffer[y * width + (x * 4 + 1)] = line.channel2[x];
+                g_displayBuffer[y * width + (x * 4 + 2)] = line.channel3[x];
+                g_displayBuffer[y * width + (x * 4 + 3)] = line.channel4[x];
+            }
+        }
+    }
+    
+    // For grayscale, we can directly apply histogram equalization
+    applyHistogramEqualization(g_displayBuffer, width, height);
+    
+    // Force window to repaint
+    InvalidateRect(g_displayWindow, NULL, FALSE);
+    UpdateWindow(g_displayWindow);
+    
+    // Process any pending messages
+    MSG msg;
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+        
+        if (msg.message == WM_QUIT) {
+            g_displayInitialized = false;
+            break;
+        }
+    }
+}
+
+// Modify the displayAllFrames function to display each frame for 5 seconds
+void displayAllFrames(const std::vector<VideoFrame>& frames) {
+    std::cout << "\n===== Displaying Frame Images =====\n" << std::endl;
+    
+    if (frames.empty()) {
+        std::cout << "No frames to display" << std::endl;
+        return;
+    }
+    
+    // Initialize the display window once
+    if (!g_displayInitialized) {
+        if (!InitializeDisplayWindow()) {
+            return;
+        }
+    }
+    
+    // Display frames with a 5 second delay between them
+    for (const auto& frame : frames) {
+        displayFrameImage(frame, frame.frameNumber);
+        
+        // Display each frame for 5 seconds as requested
+        std::cout << "Showing frame " << frame.frameNumber << " for 5 seconds..." << std::endl;
+        
+        // Handle window messages while waiting to ensure UI responsiveness
+        DWORD startTime = GetTickCount();
+        const DWORD displayTime = 5000; // 5 seconds in milliseconds (changed from 1000)
+        
+        while (GetTickCount() - startTime < displayTime) {
+            // Process window messages while waiting
+            MSG msg;
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+                
+                if (msg.message == WM_QUIT) {
+                    g_displayInitialized = false;
+                    break;
+                }
+            }
+            
+            if (!g_displayInitialized) break;
+            
+            // Short sleep to avoid maxing out CPU
+            Sleep(10);
+        }
+        
+        // Check if window was closed
+        if (!g_displayInitialized) {
+            break;
+        }
+    }
+    
+    std::cout << "All " << frames.size() << " frames have been displayed" << std::endl;
+    std::cout << "Press Enter in the console to continue..." << std::endl;
+    std::cin.get(); // Wait for user to press Enter
+    
+    // Clean up display resources
+    CleanupDisplay();
+}
+
+// Modified extractFrames function
+std::vector<VideoFrame> extractFrames(
+    const std::vector<std::vector<bool>>& channels,
+    const std::vector<size_t>& savIndices,
+    const std::vector<size_t>& eavIndices,
+    const std::vector<size_t>& saviIndices,
+    const std::vector<size_t>& eaviIndices) {
+    
+    std::vector<VideoFrame> frames;
+    const size_t patternLen = 32;
+    const size_t NORMAL_LINE_GAP = 1776;  // Normal gap between SAV markers
+    const size_t FRAME_BOUNDARY_THRESHOLD = 2 * NORMAL_LINE_GAP;  // Threshold to detect frame boundaries
+    
+    // Add safety checks
+    if (channels.empty() || channels[0].empty()) {
+        std::cout << "Error: No channel data available" << std::endl;
+        return frames;
+    }
+    
+    // Create sorted copies of indices
+    std::vector<size_t> sortedSav = savIndices;
+    std::vector<size_t> sortedEav = eavIndices;
+    std::sort(sortedSav.begin(), sortedSav.end());
+    std::sort(sortedEav.begin(), sortedEav.end());
+    
+    // Initialize first frame
+    VideoFrame currentFrame;
+    currentFrame.frameNumber = 1;
+    
+    std::cout << "\nAnalyzing line spacing..." << std::endl;
+    
+    // Process SAV positions
+    for (size_t i = 0; i < sortedSav.size(); i++) {
+        size_t savPos = sortedSav[i];
+        
+        // Check if this is a frame boundary by looking at gap to next SAV
+        bool isFrameBoundary = false;
+        if (i < sortedSav.size() - 1) {
+            size_t gap = sortedSav[i + 1] - savPos;
+            if (gap > FRAME_BOUNDARY_THRESHOLD) {
+                std::cout << "Found frame boundary at SAV[" << i << "] - Gap: " << gap << " bits" << std::endl;
+                isFrameBoundary = true;
+            }
+        }
+        
+        // Find corresponding EAV
+        auto eavIt = std::upper_bound(sortedEav.begin(), sortedEav.end(), savPos);
+        if (eavIt == sortedEav.end()) continue;
+        size_t eavPos = *eavIt;
+        
+        // Create and add line
+        VideoLine line;
+        line.startIndex = savPos;
+        line.endIndex = eavPos;
+        
+        // Extract data between SAV and EAV for each channel
+        std::vector<std::vector<uint8_t>> channelBytes(4);
+        
+        for (size_t ch = 0; ch < channels.size(); ch++) {
+            size_t start = savPos + patternLen;
+            size_t end = eavPos;
+            
+            if (start >= end || end > channels[ch].size()) continue;
+            
+            // Convert bits to bytes - MODIFIED FOR LITTLE-ENDIAN
+            std::vector<uint8_t> bytes;
+            for (size_t pos = start; pos < end; pos += 8) {
+                if (pos + 8 > end) break;
+                
+                uint8_t byte = 0;
+                for (size_t bit = 0; bit < 8; bit++) {
+                    // Little-endian: least significant bit first
+                    // Use OR with shifted bit position instead of shifting the byte
+                    byte |= (channels[ch][pos + bit] ? 1 : 0) << bit;
+                }
+                channelBytes[ch].push_back(byte);
+            }
+            
+            // Add this after the bit-to-byte conversion loop to see sample values
+            if (ch == 0 && bytes.size() > 0 && bytes.size() % 100 == 0) {
+                std::cout << "Channel " << ch << " byte samples (little-endian): ";
+                for (int i = 0; i < std::min<size_t>(10, bytes.size()); i++) {
+                    std::cout << std::hex << std::setw(2) << std::setfill('0') 
+                              << static_cast<int>(bytes[i]) << " ";
+                }
+                std::cout << std::dec << std::endl;
+                
+                // Also calculate what the big-endian version would be for comparison
+                std::cout << "Same bytes if big-endian: ";
+                for (int i = 0; i < std::min<size_t>(10, bytes.size()); i++) {
+                    uint8_t bigEndianByte = 0;
+                    for (int bit = 0; bit < 8; bit++) {
+                        bigEndianByte = (bigEndianByte << 1) | ((bytes[i] >> bit) & 1);
+                    }
+                    std::cout << std::hex << std::setw(2) << std::setfill('0') 
+                              << static_cast<int>(bigEndianByte) << " ";
+                }
+                std::cout << std::dec << std::endl;
+            }
+        }
+        
+        // Now interleave the channels like in MATLAB
+        // First, determine the min length to ensure we don't go out of bounds
+        size_t minLength = SIZE_MAX;
+        for (const auto& chBytes : channelBytes) {
+            minLength = (chBytes.size() < minLength) ? chBytes.size() : minLength;
+        }
+        
+        if (minLength == 0) continue; // Skip if any channel has no data
+        
+        // Interleave the channels into a single vector
+        std::vector<uint8_t> interleavedData(minLength * 4);
+        for (size_t idx = 0; idx < minLength; idx++) {
+            for (size_t ch = 0; ch < 4; ch++) {
+                interleavedData[idx * 4 + ch] = channelBytes[ch][idx];
+            }
+        }
+        
+        // Store the interleaved data in the line
+        line.channel1 = channelBytes[0]; // Keep individual channels for compatibility
+        line.channel2 = channelBytes[1];
+        line.channel3 = channelBytes[2];
+        line.channel4 = channelBytes[3];
+        line.interleavedData = interleavedData; // Add new field for interleaved data
+        
+        currentFrame.lines.push_back(line);
+        
+        // If this was a frame boundary, complete the current frame and start a new one
+        if (isFrameBoundary && !currentFrame.lines.empty()) {
+            frames.push_back(currentFrame);
+            std::cout << "Completed frame " << currentFrame.frameNumber 
+                      << " with " << currentFrame.lines.size() << " lines" << std::endl;
+            
+            // Start new frame
+            currentFrame = VideoFrame();
+            currentFrame.frameNumber = frames.size() + 1;
+        }
+        
+        // Print progress less frequently
+        if (currentFrame.lines.size() % 1000 == 0) {
+            std::cout << "Current frame: Processed " << currentFrame.lines.size() << " lines" << std::endl;
+        }
+    }
+    
+    // Add last frame if it has any lines
+    if (!currentFrame.lines.empty()) {
+        frames.push_back(currentFrame);
+    }
+    
+    // Print detailed frame summary
+    std::cout << "\nDetailed Frame Summary:" << std::endl;
+    for (const auto& frame : frames) {
+        std::cout << "Frame " << frame.frameNumber << ": " << frame.lines.size() 
+                  << " lines (Start: " << frame.lines.front().startIndex 
+                  << ", End: " << frame.lines.back().endIndex 
+                  << ", First line length: " << (frame.lines.back().endIndex - frame.lines.front().startIndex)
+                  << " bits)" << std::endl;
+        
+        // Print the first few line gaps in this frame
+        if (!frame.lines.empty() && frame.lines.size() > 1) {
+            std::cout << "  First few line gaps in frame " << frame.frameNumber << ":" << std::endl;
+            for (size_t i = 0; i < std::min<size_t>(5, frame.lines.size() - 1); i++) {
+                size_t gap = frame.lines[i + 1].startIndex - frame.lines[i].startIndex;
+                std::cout << "    Line " << i << " to " << (i + 1) << ": " << gap << " bits" << std::endl;
+            }
+        }
+    }
+    
+    return frames;
+}
+
+// Modified analyzeData function to detect frame boundaries properly
+void analyzeData(bool quickAnalysis) {
+    std::cout << "\n=== Starting Data Analysis ===\n" << std::endl;
     
     // Check if we have data to analyze
     if (g_analysisBuffer.empty()) {
@@ -249,284 +929,245 @@ void analyzeData(bool quickAnalysis = false) {
         return;
     }
     
-    // Check if we have enough data for meaningful analysis
-    const size_t MIN_BYTES_NEEDED = 1000 * sizeof(uint32_t); // At least 1000 uint32 elements
-    if (g_analysisBuffer.size() < MIN_BYTES_NEEDED) {
-        std::cerr << "Warning: Buffer contains only " << g_analysisBuffer.size() 
-                  << " bytes, which may be insufficient for meaningful analysis." << std::endl;
-        std::cerr << "Proceeding with limited data..." << std::endl;
-    }
-    
     std::cout << "Analyzing " << g_analysisBuffer.size() << " bytes of data..." << std::endl;
     
-    // Convert raw bytes to uint32 (assuming data is already in uint32 format)
+    // Convert raw bytes to uint32 for pattern search
     size_t numElements = g_analysisBuffer.size() / sizeof(uint32_t);
     std::vector<uint32_t> data(numElements);
-    
-    // Copy data from g_analysisBuffer to data vector
-    std::cout << "Copying data to analysis buffer..." << std::endl;
-    auto startTime = std::chrono::high_resolution_clock::now();
     memcpy(data.data(), g_analysisBuffer.data(), g_analysisBuffer.size());
-    auto endTime = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-    std::cout << "Data copy completed in " << duration << " ms." << std::endl;
     
-    // Limit data size for analysis (similar to MATLAB's 5e6 limit)
-    const size_t MAX_ELEMENTS = 2500000; // 250,000 elements (about 1MB for uint32)
-    if (data.size() > MAX_ELEMENTS) {
-        std::cout << "Limiting analysis to first " << MAX_ELEMENTS << " elements (" 
-                  << (MAX_ELEMENTS * sizeof(uint32_t) / (1024.0 * 1024.0)) << " MB)." << std::endl;
-        data.resize(MAX_ELEMENTS);
+    // Convert to bits
+    std::vector<uint8_t> rawBits = lookAtBits(data, false, "little", false, "uint32");
+    std::vector<bool> bits(rawBits.begin(), rawBits.end());
+    
+    // Create patterns for SAV and EAV
+    std::vector<bool> savPattern = createSAVPattern();
+    std::vector<bool> eavPattern = createEAVPattern();
+    
+    std::cout << "Searching for SAV/EAV patterns in channel 0 to determine frame structure..." << std::endl;
+    
+    // Split the bits into 4 channels
+    std::vector<std::vector<bool>> channelBits(4);
+    for (size_t i = 0; i < bits.size(); i++) {
+        channelBits[i % 4].push_back(bits[i]);
     }
     
-    // Convert to proper type then to binary bits
-    std::cout << "Converting data to bits..." << std::endl;
-    startTime = std::chrono::high_resolution_clock::now();
-    std::vector<bool> bits = lookAtBits(data, useGPU, endian, verbose, bitDepthFX3);
-    endTime = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-    std::cout << "Bit conversion completed in " << duration << " ms. Total bits: " << bits.size() << std::endl;
+    // Search for patterns in only the first channel for efficiency
+    std::vector<size_t> savPositions = findPattern(channelBits[0], savPattern);
+    std::vector<size_t> eavPositions = findPattern(channelBits[0], eavPattern);
     
-    // Reshape bits into columns (similar to MATLAB's reshape)
-    std::vector<bool> columnBits = bits; // No need to reshape in C++
-    
-    // Split the data into four channels
-    std::cout << "Splitting data into channels..." << std::endl;
-    startTime = std::chrono::high_resolution_clock::now();
-    
-    // Pre-allocate vectors with exact size
-    const size_t channelSize = columnBits.size() / 4;
-    std::vector<bool> bits1(channelSize);
-    std::vector<bool> bits2(channelSize);
-    std::vector<bool> bits3(channelSize);
-    std::vector<bool> bits4(channelSize);
-    
-    // Process in batches for better performance
-    const size_t BATCH_SIZE = 10000;
-    const size_t numBatches = (columnBits.size() / 4 + BATCH_SIZE - 1) / BATCH_SIZE;
-    
-    if (verbose) {
-        std::cout << "Processing " << numBatches << " batches for channel splitting..." << std::endl;
-    }
-    
-    size_t channelIdx = 0;
-    for (size_t batch = 0; batch < numBatches; ++batch) {
-        if (verbose && batch % 10 == 0) {
-            std::cout << "Processing batch " << batch + 1 << " of " << numBatches << " for channel splitting..." << std::endl;
+    std::cout << "Found " << savPositions.size() << " SAV markers in channel 0" << std::endl;
+    std::cout << "Found " << eavPositions.size() << " EAV markers in channel 0" << std::endl;
+    std::cout << "Using channel 0 markers for frame structure analysis..." << std::endl;
+
+    // Analyze a sample of SAV/EAV pairs to get actual pixel counts
+    if (!savPositions.empty() && !eavPositions.empty()) {
+        std::cout << "\n=== Analyzing SAV/EAV Pixel Data ===\n" << std::endl;
+        
+        // For the first few SAV markers, find their matching EAV markers
+        const int samplesToShow = 5; // Number of SAV/EAV pairs to analyze
+        int samplesFound = 0;
+        
+        std::cout << "Sample SAV/EAV pairs from channel 0:" << std::endl;
+        
+        for (size_t i = 0; i < savPositions.size() && samplesFound < samplesToShow; i++) {
+            // Find the corresponding EAV that comes after this SAV
+            auto eavIt = std::upper_bound(eavPositions.begin(), eavPositions.end(), savPositions[i]);
+            
+            if (eavIt != eavPositions.end()) {
+                // Calculate distance in bits and bytes
+                size_t savPos = savPositions[i];
+                size_t eavPos = *eavIt;
+                size_t distanceBits = eavPos - savPos;
+                size_t distanceBytes = (distanceBits - 64) / 8; // Subtract SAV/EAV markers (each 32 bits) and convert to bytes
+                
+                std::cout << "Pair " << (samplesFound + 1) << ": SAV at " << savPos 
+                          << ", EAV at " << eavPos 
+                          << " | Distance: " << distanceBits << " bits"
+                          << " | Pixel data: " << distanceBytes << " bytes in one channel" << std::endl;
+                
+                // Calculate how many pixels this would be across all 4 channels
+                size_t totalPixelsAcrossChannels = distanceBytes * 4;
+                std::cout << "  → When interleaved, this row would contain " << totalPixelsAcrossChannels 
+                          << " total pixels across all 4 channels" << std::endl;
+                
+                samplesFound++;
+            }
         }
         
-        size_t startIdx = batch * BATCH_SIZE * 4;
-        size_t endIdx = std::min<size_t>(startIdx + BATCH_SIZE * 4, columnBits.size() - 3);
-        
-        for (size_t i = startIdx; i < endIdx; i += 4) {
-            if (channelIdx < channelSize) {
-                bits3[channelIdx] = columnBits[i];     // 1:4:end
-                bits1[channelIdx] = columnBits[i + 1]; // 2:4:end
-                bits2[channelIdx] = columnBits[i + 2]; // 3:4:end
-                bits4[channelIdx] = columnBits[i + 3]; // 4:4:end
-                channelIdx++;
+        // Calculate the average for a larger sample if enough data is available
+        if (savPositions.size() >= 10) {
+            size_t totalBits = 0;
+            int validSamples = 0;
+            
+            // Use first 50 samples for average calculation (or fewer if not available)
+            size_t sampleLimit = std::min<size_t>(savPositions.size(), 50);
+            
+            for (size_t i = 0; i < sampleLimit; i++) {
+                auto eavIt = std::upper_bound(eavPositions.begin(), eavPositions.end(), savPositions[i]);
+                if (eavIt != eavPositions.end()) {
+                    size_t distanceBits = *eavIt - savPositions[i];
+                    
+                    // Only include reasonable distances
+                    if (distanceBits > 100 && distanceBits < 5000) {
+                        totalBits += distanceBits;
+                        validSamples++;
+                    }
+                }
+            }
+            
+            if (validSamples > 0) {
+                double avgBitsPerLine = static_cast<double>(totalBits) / validSamples;
+                double avgBytesPerChannel = (avgBitsPerLine - 64) / 8.0; // Subtract SAV/EAV markers
+                double avgTotalPixels = avgBytesPerChannel * 4; // Multiply by 4 channels
+                
+                std::cout << "\nAverage Line Statistics (from " << validSamples << " samples):" << std::endl;
+                std::cout << "  • Average bits between SAV and EAV: " << avgBitsPerLine << " bits" << std::endl;
+                std::cout << "  • Average pixel data per channel: " << avgBytesPerChannel << " bytes" << std::endl;
+                std::cout << "  • Average total pixels per row (all channels): " << avgTotalPixels << " pixels" << std::endl;
             }
         }
     }
-    
-    endTime = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-    std::cout << "Channel splitting completed in " << duration << " ms." << std::endl;
-    std::cout << "Channel bit counts: Ch1: " << bits1.size() << ", Ch2: " << bits2.size() 
-              << ", Ch3: " << bits3.size() << ", Ch4: " << bits4.size() << std::endl;
-    
-    // Define patterns to search for
-    std::cout << "Creating patterns to search for..." << std::endl;
-    startTime = std::chrono::high_resolution_clock::now();
-    
-    std::vector<bool> code1 = hexToBinaryVector("FF", 8);
-    std::vector<bool> code2 = hexToBinaryVector("00", 8);
-    std::vector<bool> code3 = hexToBinaryVector("00", 8);
-    
-    // Create the patterns
-    std::vector<bool> patternStartValid, patternStartInvalid, patternEndValid, patternEndInvalid;
-    
-    // Concatenate vectors to create patterns
-    patternStartValid.insert(patternStartValid.end(), code1.begin(), code1.end());
-    patternStartValid.insert(patternStartValid.end(), code2.begin(), code2.end());
-    patternStartValid.insert(patternStartValid.end(), code3.begin(), code3.end());
-    std::vector<bool> savCode = getCode("sav");
-    patternStartValid.insert(patternStartValid.end(), savCode.begin(), savCode.end());
-    
-    patternStartInvalid.insert(patternStartInvalid.end(), code1.begin(), code1.end());
-    patternStartInvalid.insert(patternStartInvalid.end(), code2.begin(), code2.end());
-    patternStartInvalid.insert(patternStartInvalid.end(), code3.begin(), code3.end());
-    std::vector<bool> saviCode = getCode("savi");
-    patternStartInvalid.insert(patternStartInvalid.end(), saviCode.begin(), saviCode.end());
-    
-    patternEndValid.insert(patternEndValid.end(), code1.begin(), code1.end());
-    patternEndValid.insert(patternEndValid.end(), code2.begin(), code2.end());
-    patternEndValid.insert(patternEndValid.end(), code3.begin(), code3.end());
-    std::vector<bool> eavCode = getCode("eav");
-    patternEndValid.insert(patternEndValid.end(), eavCode.begin(), eavCode.end());
-    
-    patternEndInvalid.insert(patternEndInvalid.end(), code1.begin(), code1.end());
-    patternEndInvalid.insert(patternEndInvalid.end(), code2.begin(), code2.end());
-    patternEndInvalid.insert(patternEndInvalid.end(), code3.begin(), code3.end());
-    std::vector<bool> eaviCode = getCode("eavi");
-    patternEndInvalid.insert(patternEndInvalid.end(), eaviCode.begin(), eaviCode.end());
-    
-    endTime = std::chrono::high_resolution_clock::now();
-    duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-    std::cout << "Pattern creation completed in " << duration << " ms." << std::endl;
-    
-    // Store patterns and channel data in vectors for easier iteration
-    std::vector<std::vector<bool>> patternCell = {
-        patternStartValid, patternStartInvalid, patternEndValid, patternEndInvalid
-    };
-    std::vector<std::string> patternNames = {"sav", "savi", "eav", "eavi"};
-    std::vector<std::vector<bool>> bitsCell = {bits1, bits2, bits3, bits4};
-    
-    // Search for patterns in each channel
-    std::cout << "\nSearching for patterns in each channel..." << std::endl;
-    std::vector<std::vector<std::vector<size_t>>> indicesMatrix(patternCell.size(), 
-                                                              std::vector<std::vector<size_t>>(bitsCell.size()));
-    
-    for (size_t p = 0; p < patternCell.size(); ++p) {
-        const auto& pattern = patternCell[p];
-        for (size_t ch = 0; ch < bitsCell.size(); ++ch) {
-            std::cout << "Searching for " << patternNames[p] << " in channel " << (ch + 1) << "... ";
-            std::cout.flush(); // Flush to show progress
-            
-            auto startTime = std::chrono::high_resolution_clock::now();
-            indicesMatrix[p][ch] = findPattern(bitsCell[ch], pattern);
-            auto endTime = std::chrono::high_resolution_clock::now();
-            
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
-            std::cout << "Found " << indicesMatrix[p][ch].size() << " matches in " 
-                      << duration << " ms." << std::endl;
+
+    // Calculate normal line gaps to identify frame boundaries
+    std::vector<int> lineGaps;
+    for (size_t i = 1; i < savPositions.size(); i++) {
+        int gap = static_cast<int>(savPositions[i] - savPositions[i-1]);
+        lineGaps.push_back(gap);
+    }
+
+    // Find the most common line gap (typical line distance)
+    int normalLineGap = 0;
+    if (!lineGaps.empty()) {
+        std::sort(lineGaps.begin(), lineGaps.end());
+        
+        int currentCount = 1;
+        int maxCount = 1;
+        int mostCommonGap = lineGaps[0];
+        
+        for (size_t i = 1; i < lineGaps.size(); i++) {
+            if (lineGaps[i] == lineGaps[i-1]) {
+                currentCount++;
+            } else {
+                if (currentCount > maxCount) {
+                    maxCount = currentCount;
+                    mostCommonGap = lineGaps[i-1];
+                }
+                currentCount = 1;
+            }
+        }
+        
+        // Check the last sequence
+        if (currentCount > maxCount) {
+            mostCommonGap = lineGaps.back();
+        }
+        
+        normalLineGap = mostCommonGap;
+        std::cout << "\nAnalyzing line spacing in channel 0..." << std::endl;
+        std::cout << "Normal line gap between SAV markers in channel 0: " << normalLineGap << " bits" << std::endl;
+    }
+
+    // Detect frame boundaries using significant gaps between SAV markers
+    std::vector<size_t> frameStartIndices = {0}; // First SAV is start of first frame
+    int frameBoundaryThreshold = normalLineGap * 2; // Gap threshold for frame boundary
+    std::cout << "Using frame boundary threshold of " << frameBoundaryThreshold 
+              << " bits (2× normal line gap) to detect frame boundaries" << std::endl;
+
+    for (size_t i = 1; i < savPositions.size(); i++) {
+        int gap = static_cast<int>(savPositions[i] - savPositions[i-1]);
+        if (gap > frameBoundaryThreshold) {
+            std::cout << "Frame boundary detected at position " << i 
+                      << " (gap: " << gap << " bits, significantly larger than normal line gap)" << std::endl;
+            frameStartIndices.push_back(i);
         }
     }
-    
-    // Display pattern search results
-    std::cout << "\nPattern Search Results:" << std::endl;
-    for (size_t p = 0; p < patternCell.size(); ++p) {
-        for (size_t ch = 0; ch < bitsCell.size(); ++ch) {
-            std::cout << "Pattern: " << patternNames[p] << " in Channel " << (ch + 1) 
-                      << " => Found " << indicesMatrix[p][ch].size() << " times." << std::endl;
+
+    std::cout << "\nDetected " << frameStartIndices.size() 
+              << " potential frames in channel 0 data" << std::endl;
+
+    // Create frame(s) based on the detected boundaries
+    std::vector<VideoFrame> frames;
+
+    for (size_t frameIdx = 0; frameIdx < frameStartIndices.size(); frameIdx++) {
+        size_t startIdx = frameStartIndices[frameIdx];
+        size_t endIdx = (frameIdx < frameStartIndices.size() - 1) ? 
+                        frameStartIndices[frameIdx + 1] : savPositions.size();
+        
+        int frameRows = static_cast<int>(endIdx - startIdx);
+        std::cout << "Frame " << (frameIdx + 1) << " has " << frameRows << " rows" << std::endl;
+        
+        // Create frame
+        VideoFrame frame;
+        frame.frameNumber = frameIdx + 1;
+        
+        for (size_t i = startIdx; i < endIdx; i++) {
+            if (i >= savPositions.size()) break;
+            
+        VideoLine line;
+            line.startIndex = savPositions[i];
+            
+            // Find corresponding EAV
+            size_t eavIdx = 0;
+            for (size_t j = 0; j < eavPositions.size(); j++) {
+                if (eavPositions[j] > savPositions[i]) {
+                    eavIdx = j;
+                    break;
+                }
+            }
+            
+            if (eavIdx < eavPositions.size()) {
+                line.endIndex = eavPositions[eavIdx];
+            } else {
+                // If no EAV found, use SAV + estimated active video width
+                line.endIndex = savPositions[i] + 1456; // Using detected row width in bits
+            }
+            
+            // Convert from bit positions to byte positions in the raw data buffer
+            size_t byteOffset = (savPositions[i] / 32) * 4; // 32 bits = 4 bytes
+            size_t lineLength = normalLineGap; // Use calculated normal line gap
+            
+            if (byteOffset + lineLength <= g_analysisBuffer.size()) {
+                // Extract the line data
+            line.channel1.assign(
+                    g_analysisBuffer.begin() + byteOffset,
+                    g_analysisBuffer.begin() + byteOffset + lineLength
+            );
+            
+            // Create interleaved data for display
+                line.interleavedData.resize(lineLength * 4);
+                for (size_t x = 0; x < lineLength; x++) {
+                    size_t idx = x;
+                    if (idx < line.channel1.size()) {
+                        line.interleavedData[x * 4] = line.channel1[idx];
+                        line.interleavedData[x * 4 + 1] = line.channel1[idx];
+                        line.interleavedData[x * 4 + 2] = line.channel1[idx];
+                line.interleavedData[x * 4 + 3] = 255;  // Full alpha
+                    }
+                }
+                
+                frame.lines.push_back(line);
+            }
+        }
+        
+        if (!frame.lines.empty()) {
+            frames.push_back(frame);
         }
     }
-    
-    // Search for specific sync patterns across channels
-    std::cout << "\nSearching for specific sync patterns..." << std::endl;
-    
-    // For each channel, find start-valid, start-invalid, end-valid, and end-invalid indices
-    std::vector<size_t> idx1sav = findPattern(bits1, patternStartValid);
-    std::vector<size_t> idx2sav = findPattern(bits2, patternStartValid);
-    std::vector<size_t> idx3sav = findPattern(bits3, patternStartValid);
-    std::vector<size_t> idx4sav = findPattern(bits4, patternStartValid);
-    
-    std::vector<size_t> idx1savi = findPattern(bits1, patternStartInvalid);
-    std::vector<size_t> idx2savi = findPattern(bits2, patternStartInvalid);
-    std::vector<size_t> idx3savi = findPattern(bits3, patternStartInvalid);
-    std::vector<size_t> idx4savi = findPattern(bits4, patternStartInvalid);
-    
-    std::vector<size_t> idx1eav = findPattern(bits1, patternEndValid);
-    std::vector<size_t> idx2eav = findPattern(bits2, patternEndValid);
-    std::vector<size_t> idx3eav = findPattern(bits3, patternEndValid);
-    std::vector<size_t> idx4eav = findPattern(bits4, patternEndValid);
-    
-    std::vector<size_t> idx1eavi = findPattern(bits1, patternEndInvalid);
-    std::vector<size_t> idx2eavi = findPattern(bits2, patternEndInvalid);
-    std::vector<size_t> idx3eavi = findPattern(bits3, patternEndInvalid);
-    std::vector<size_t> idx4eavi = findPattern(bits4, patternEndInvalid);
-    
-    // Display counts of sync indices
-    std::cout << "\nSync Pattern Counts:" << std::endl;
-    std::cout << "Start valid patterns found: "
-              << "Ch1: " << idx1sav.size() << ", "
-              << "Ch2: " << idx2sav.size() << ", "
-              << "Ch3: " << idx3sav.size() << ", "
-              << "Ch4: " << idx4sav.size() << std::endl;
-              
-    std::cout << "End valid patterns found: "
-              << "Ch1: " << idx1eav.size() << ", "
-              << "Ch2: " << idx2eav.size() << ", "
-              << "Ch3: " << idx3eav.size() << ", "
-              << "Ch4: " << idx4eav.size() << std::endl;
-              
-    std::cout << "Start invalid patterns found: "
-              << "Ch1: " << idx1savi.size() << ", "
-              << "Ch2: " << idx2savi.size() << ", "
-              << "Ch3: " << idx3savi.size() << ", "
-              << "Ch4: " << idx4savi.size() << std::endl;
-              
-    std::cout << "End invalid patterns found: "
-              << "Ch1: " << idx1eavi.size() << ", "
-              << "Ch2: " << idx2eavi.size() << ", "
-              << "Ch3: " << idx3eavi.size() << ", "
-              << "Ch4: " << idx4eavi.size() << std::endl;
-    
-    // Get matching sync indices between channels (using intersections)
-    std::cout << "\nFinding matching sync indices between channels..." << std::endl;
-    
-    // For SAV (Start Active Video)
-    std::vector<size_t> matchingValues1 = intersect(idx1sav, idx2sav);
-    std::vector<size_t> matchingValues2 = intersect(idx3sav, idx4sav);
-    std::vector<size_t> matchingValues = intersect(matchingValues1, matchingValues2);
-    
-    idx1sav = matchingValues;
-    idx2sav = matchingValues;
-    idx3sav = matchingValues;
-    idx4sav = matchingValues;
-    
-    // For EAV (End Active Video)
-    matchingValues1 = intersect(idx1eav, idx2eav);
-    matchingValues2 = intersect(idx3eav, idx4eav);
-    matchingValues = intersect(matchingValues1, matchingValues2);
-    
-    idx1eav = matchingValues;
-    idx2eav = matchingValues;
-    idx3eav = matchingValues;
-    idx4eav = matchingValues;
-    
-    // For SAVI (Start Active Video Invalid)
-    matchingValues1 = intersect(idx1savi, idx2savi);
-    matchingValues2 = intersect(idx3savi, idx4savi);
-    matchingValues = intersect(matchingValues1, matchingValues2);
-    
-    idx1savi = matchingValues;
-    idx2savi = matchingValues;
-    idx3savi = matchingValues;
-    idx4savi = matchingValues;
-    
-    // For EAVI (End Active Video Invalid)
-    matchingValues1 = intersect(idx1eavi, idx2eavi);
-    matchingValues2 = intersect(idx3eavi, idx4eavi);
-    matchingValues = intersect(matchingValues1, matchingValues2);
-    
-    idx1eavi = matchingValues;
-    idx2eavi = matchingValues;
-    idx3eavi = matchingValues;
-    idx4eavi = matchingValues;
-    
-    // Display final results after intersection
-    std::cout << "\nFinal Results (after intersection):" << std::endl;
-    std::cout << "Matching SAV patterns across all channels: " << idx1sav.size() << std::endl;
-    std::cout << "Matching EAV patterns across all channels: " << idx1eav.size() << std::endl;
-    std::cout << "Matching SAVI patterns across all channels: " << idx1savi.size() << std::endl;
-    std::cout << "Matching EAVI patterns across all channels: " << idx1eavi.size() << std::endl;
-    
-    // Filter good indices using matchIdxs function
-    std::cout << "\nFiltering and matching indices..." << std::endl;
-    matchIdxs(idx1sav, idx1eav);
-    matchIdxs(idx2sav, idx2eav);
-    matchIdxs(idx3sav, idx3eav);
-    matchIdxs(idx4sav, idx4eav);
-    matchIdxs(idx1savi, idx1eavi);
-    matchIdxs(idx2savi, idx2eavi);
-    matchIdxs(idx3savi, idx3eavi);
-    matchIdxs(idx4savi, idx4eavi);
-    
-    std::cout << "Filtered sav: " << idx1sav.size() << ", Filtered eav: " << idx1eav.size() << std::endl;
-    std::cout << "Filtered savi: " << idx1savi.size() << ", Filtered eavi: " << idx1eavi.size() << std::endl;
-    
-    std::cout << "\n=== Analysis Complete ===\n" << std::endl;
+
+    std::cout << "\nCreated " << frames.size() << " frames from detected boundaries" << std::endl;
+    for (size_t i = 0; i < frames.size(); i++) {
+        std::cout << "Frame " << (i + 1) << ": " << frames[i].lines.size() << " lines" << std::endl;
+    }
+
+    // Display all frames
+    if (!frames.empty()) {
+    displayAllFrames(frames);
+    } else {
+        std::cout << "Failed to create valid frames from data" << std::endl;
+    }
+
+    // Return from function since we've handled the frame creation
+    return;
 }
 
 // Watchdog function to monitor progress
@@ -644,6 +1285,57 @@ void resetEndpoint() {
     }
 }
 
+// Helper function to create pattern with given code
+std::vector<bool> createPattern(const std::string& codeType) {
+    std::vector<bool> code1 = hexToBinaryVector("FF", 8);
+    std::vector<bool> code2 = hexToBinaryVector("00", 8);
+    std::vector<bool> code3 = hexToBinaryVector("00", 8);
+    std::vector<bool> code = getCode(codeType);
+    
+    std::vector<bool> pattern;
+    pattern.insert(pattern.end(), code1.begin(), code1.end());
+    pattern.insert(pattern.end(), code2.begin(), code2.end());
+    pattern.insert(pattern.end(), code3.begin(), code3.end());
+    pattern.insert(pattern.end(), code.begin(), code.end());
+    
+    return pattern;
+}
+
+// Helper function to create SAV pattern
+std::vector<bool> createSAVPattern() {
+    return createPattern("sav");
+}
+
+// Helper function to create EAV pattern
+std::vector<bool> createEAVPattern() {
+    return createPattern("eav");
+}
+
+// Add these helper functions
+std::vector<bool> createSAVIPattern() {
+    return createPattern("savi");
+}
+
+std::vector<bool> createEAVIPattern() {
+    return createPattern("eavi");
+}
+
+// Global variable to store GDI+ token
+ULONG_PTR g_gdiplusToken = 0;
+
+// Initialize and shutdown GDI+
+void InitGDIPlus() {
+    Gdiplus::GdiplusStartupInput gdiplusStartupInput;
+    Gdiplus::GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
+}
+
+void ShutdownGDIPlus() {
+    if (g_gdiplusToken != 0) {
+        Gdiplus::GdiplusShutdown(g_gdiplusToken);
+        g_gdiplusToken = 0;
+    }
+}
+
 int main() {
     std::cout << "Starting program..." << std::endl;
 
@@ -656,7 +1348,7 @@ int main() {
     // const int NUM_BUFFERS = 3;       // Moved to global scope
 
     // Calculate total bytes to transfer based on buffer size (approximately 100MB)
-    const long KB_TO_TRANSFER = 100000 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // Adjust to be a multiple of buffer size
+    const long KB_TO_TRANSFER = 10 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // ~10MB instead of 2MB
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
 
     // For 150 MB/s data rate
@@ -810,193 +1502,100 @@ int main() {
         QueryPerformanceCounter(&lastDataTime);
         bool dataReceivedSinceLastCheck = false;
 
-        // Main transfer loop
-        while (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
-            // Increment heartbeat counter to show the loop is still running
-            g_loopHeartbeat++;
+        // Instead of having separate flush and acquisition phases:
 
-            // Calculate next transfer size
-            bytesToTransfer = static_cast<long>(std::min<long long>(
-                static_cast<long long>(BUFFER_SIZE),
-                static_cast<long long>(TOTAL_BYTES_TO_TRANSFER - totalTransferred)
-            )) & ~0x3;  // Align to 4-byte boundary
+        // 1. Set up circular buffer management
+        const size_t FLUSH_COUNT = 10;  // Reduced from 100 to just 10 buffer cycles for testing
+        size_t bufferCycleCount = 0;
+        bool flushComplete = false;
 
+        // 2. Set up a single acquisition loop
+        std::cout << "Starting continuous acquisition (initial cycles will be used for flushing)..." << std::endl;
+
+        // Initialize all buffers once
+        for (int i = 0; i < NUM_BUFFERS; i++) {
+            if (!bulkInEndpoint->BeginDataXfer(buffers[i], BUFFER_SIZE, &ovLapArray[i])) {
+                throw std::runtime_error("Failed to queue initial transfer");
+            }
+        }
+
+        totalTransferred = 0;
+        currentBuffer = 0;
+
+        // Single acquisition loop
+        while (g_analysisBuffer.size() < ANALYSIS_BUFFER_SIZE) {
+            // Process buffer as before...
             // Wait for current buffer with adaptive timeout
-            g_loopHeartbeat++;  // Heartbeat before wait
             DWORD waitResult = WaitForSingleObject(ovLapArray[currentBuffer].hEvent, currentTimeout);
-            g_loopHeartbeat++;  // Heartbeat after wait
-
-            if (waitResult == WAIT_OBJECT_0) {
-                // Transfer completed successfully
-                consecutiveSuccesses++;
-                consecutiveErrors = 0;
-
-                // Reduce timeout after several successful transfers
-                if (consecutiveSuccesses > 5 && currentTimeout > 50) {
-                    currentTimeout = 50;  // Reduce to 50ms after success
-                }
-            }
-            else if (waitResult == WAIT_TIMEOUT) {
-                // Handle timeout
-                consecutiveSuccesses = 0;
-                consecutiveErrors++;
-
-                // Increase timeout after failures
-                if (consecutiveErrors > 2) {
-                    currentTimeout = std::min<DWORD>(currentTimeout * 2, 1000);  // Double timeout up to 1 seconds
-                }
-
-                // Try to recover the transfer
-                LONG transferred = 0;
-                DWORD bytesTransferred = 0;
-                if (!GetOverlappedResult(bulkInEndpoint->hDevice,
-                    &ovLapArray[currentBuffer],
-                    &bytesTransferred,
-                    TRUE)) {  // Wait for completion
-                    transferred = static_cast<LONG>(bytesTransferred);
-
-                    if (consecutiveErrors >= MAX_RETRY_COUNT) {
-                        resetEndpoint();
-                        consecutiveErrors = 0;
-
-                        // Re-queue this buffer
-                        if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], BUFFER_SIZE,
-                            &ovLapArray[currentBuffer])) {
-                            throw std::runtime_error("Failed to re-queue transfer after reset");
-                        }
-                        continue;  // Skip to next iteration without advancing buffer
-                    }
-
-                    continue;  // Try again with the same buffer
-                }
-                g_loopHeartbeat++;  // Heartbeat in timeout handling
-            }
-
-            // Get transfer result
-            g_loopHeartbeat++;  // Heartbeat before getting result
-            LONG transferred = BUFFER_SIZE;  // Initialize with the buffer size
-            PUCHAR buffer = buffers[currentBuffer];
-            OVERLAPPED* ov = &ovLapArray[currentBuffer];
-
-            // Validate pointers before proceeding
-            if (!bulkInEndpoint || !buffer || !ov) {
-                if (bulkInEndpoint) resetEndpoint();
-
-                continue;
-            }
-
-            // Use a try-catch block to handle potential access violations
-            try {
-                // Try a different approach - use GetOverlappedResult directly instead of FinishDataXfer
+            
+            // Handle the transfer completion as before...
                 DWORD bytesXferred = 0;
                 BOOL success = GetOverlappedResult(
                     bulkInEndpoint->hDevice,
-                    ov,
+                &ovLapArray[currentBuffer],
                     &bytesXferred,
-                    TRUE  // Wait for completion
-                );
-
-                transferred = static_cast<LONG>(bytesXferred);
-
-                if (!success || transferred <= 0) {
-                    consecutiveErrors++;
-
-                    if (consecutiveErrors >= MAX_RETRY_COUNT) {
-                        resetEndpoint();
-                        consecutiveErrors = 0;
-                    }
-
-                    // Re-queue this buffer
-                    if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], BUFFER_SIZE,
-                        &ovLapArray[currentBuffer])) {
-                        throw std::runtime_error("Failed to re-queue transfer");
-                    }
-                    continue;  // Skip to next iteration without advancing buffer
-                }
-                g_loopHeartbeat++;  // Heartbeat after getting result
-            }
-            catch (const std::exception& e) {
-                consecutiveErrors++;
-
-                // Try to recover
-                resetEndpoint();
-
-                // Re-queue this buffer
-                if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], BUFFER_SIZE,
-                    &ovLapArray[currentBuffer])) {
-                    throw std::runtime_error("Failed to re-queue transfer after exception");
-                }
-                continue;  // Skip to next iteration without advancing buffer
-                g_loopHeartbeat++;  // Heartbeat in exception handling
-            }
-
+                TRUE
+            );
+            
+            // Make sure we declare this variable properly
+            LONG transferred = static_cast<LONG>(bytesXferred);
+            
             if (transferred > 0) {
-                // Process current buffer
-                long bytesToWrite = (transferred & ~0x3);  // Align to 4-byte boundary
-
-                // Store data in memory buffer for later analysis
-                g_analysisBuffer.insert(g_analysisBuffer.end(), buffers[currentBuffer], buffers[currentBuffer] + bytesToWrite);
+                bufferCycleCount++;
                 
-                // Check if we've reached the buffer size limit
-                if (g_analysisBuffer.size() >= ANALYSIS_BUFFER_SIZE) {
-                    std::cout << "Analysis buffer full (" << (g_analysisBuffer.size() / (1024 * 1024)) 
-                              << " MB). Stopping data collection." << std::endl;
-                    break;  // Exit the transfer loop
-                }
-                
-                totalTransferred += bytesToWrite;
-                g_totalBytesTransferred.store(totalTransferred);  // Update global counter for watchdog
-                bytesThisInterval += bytesToWrite;
-                buffersThisInterval++;
-
-                // Update last data time when we receive data
-                if (bytesToWrite > 0) {
-                    QueryPerformanceCounter(&lastDataTime);
-                    dataReceivedSinceLastCheck = true;
-                }
-
-                // Performance reporting (minimal, once per second)
-                QueryPerformanceCounter(&perfNow);
-                double elapsedSec = (perfNow.QuadPart - perfStart.QuadPart) / (double)perfFreq.QuadPart;
-                if (elapsedSec >= 1.0) {  // Report every second
-                    double mbps = (bytesThisInterval * 8.0) / (elapsedSec * 1000000.0);
-                    std::cout << "Transfer rate: " << mbps << " Mbps ("
-                        << (bytesThisInterval / (1024.0 * 1024.0)) << " MB/s)" << std::endl;
-
-                    // Reset interval counters
-                    bytesThisInterval = 0;
-                    buffersThisInterval = 0;
-                    QueryPerformanceCounter(&perfStart);
-                }
-
-                // Queue next transfer immediately after processing
-                int nextBufferToQueue = currentBuffer;  // Reuse the buffer we just finished with
-                if (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
-                    if (!bulkInEndpoint->BeginDataXfer(buffers[nextBufferToQueue], BUFFER_SIZE,
-                        &ovLapArray[nextBufferToQueue])) {
-                        throw std::runtime_error("Failed to begin next transfer");
+                // Only start saving data after flush phase
+                if (!flushComplete) {
+                    if (bufferCycleCount >= FLUSH_COUNT) {
+                        flushComplete = true;
+                        std::cout << "Flush complete. Starting data collection..." << std::endl;
                     }
-                }
+                } else {
+                    // Save data only after flush phase
+                long bytesToWrite = (transferred & ~0x3);  // Align to 4-byte boundary
+                    
+                    // No longer print for every buffer
+                    g_analysisBuffer.insert(g_analysisBuffer.end(), 
+                                                   buffers[currentBuffer], 
+                                                   buffers[currentBuffer] + bytesToWrite);
 
-                // Check for inactivity
-                QueryPerformanceCounter(&perfNow);
-                double inactivityTime = (perfNow.QuadPart - lastDataTime.QuadPart) / (double)perfFreq.QuadPart * 1000.0;
-
-                // If no data received for INACTIVITY_TIMEOUT milliseconds, exit the loop
-                if (dataReceivedSinceLastCheck && inactivityTime > INACTIVITY_TIMEOUT) {
-                    std::cout << "No data received for " << (inactivityTime / 1000.0) << " seconds. Transmission appears to have stopped." << std::endl;
-                    std::cout << "Exiting transfer loop..." << std::endl;
+                    totalTransferred += bytesToWrite;
+                    g_totalBytesTransferred.store(totalTransferred);
+                    
+                    // Print progress only every 10 buffers instead of every buffer
+                    if (bufferCycleCount % 10 == 0) {
+                        std::cout << "Collected " << g_analysisBuffer.size() / (1024.0 * 1024.0) 
+                                  << " MB of data (" << (g_analysisBuffer.size() * 100 / ANALYSIS_BUFFER_SIZE) 
+                                  << "% complete)" << std::endl;
+                    }
+                
+                    // Break once we have 2 MB of analysis data
+                if (g_analysisBuffer.size() >= ANALYSIS_BUFFER_SIZE) {
+                        std::cout << "Collected " << g_analysisBuffer.size() / (1024.0 * 1024.0) 
+                                  << " MB of data for analysis. Stopping data collection." << std::endl;
                     break;  // Exit the transfer loop
                 }
-
-                // Reset the flag for the next interval
-                dataReceivedSinceLastCheck = false;
-                g_loopHeartbeat++;  // Heartbeat after processing buffer
+                }
+                
+                // Always re-queue the buffer immediately
+                if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], BUFFER_SIZE,
+                                                  &ovLapArray[currentBuffer])) {
+                    throw std::runtime_error("Failed to re-queue transfer");
+                }
+            }
+            else {
+                // Handle case where no bytes were transferred - only print on failures
+                std::cout << "Buffer cycle failed - 0 bytes transferred. waitResult=" << waitResult 
+                          << ", success=" << (success ? "true" : "false") << std::endl;
+                
+                // Still re-queue the buffer to keep the pipeline moving
+                if (!bulkInEndpoint->BeginDataXfer(buffers[currentBuffer], BUFFER_SIZE,
+                                                  &ovLapArray[currentBuffer])) {
+                    throw std::runtime_error("Failed to re-queue transfer after 0 bytes");
+                }
             }
 
             // Move to next buffer
             currentBuffer = (currentBuffer + 1) % NUM_BUFFERS;
-            g_loopHeartbeat++;  // Heartbeat after queuing next transfer
         }
 
         // Clean up
@@ -1043,10 +1642,10 @@ int main() {
 
         // Cleanup on error with proper null checks
         for (int i = 0; i < NUM_BUFFERS; i++) {
-            if (ovLapArray && ovLapArray[i].hEvent != NULL) {
+            if (ovLapArray[i].hEvent != NULL) {
                 CloseHandle(ovLapArray[i].hEvent);
             }
-            if (buffers && buffers[i] != NULL) {
+            if (buffers[i] != NULL) {
                 _aligned_free(buffers[i]);
             }
         }
