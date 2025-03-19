@@ -50,6 +50,9 @@ std::vector<bool> createEAVPattern();  // near the other function declarations
 // Add this forward declaration near the top of the file, with the other forward declarations
 void applyAdaptiveHistogramEqualization(BYTE* imageData, int width, int height, int tileSize);
 
+// Add this global variable near the top with the other globals
+bool g_applyHistogramEqualization = false; // Toggle for histogram equalization
+
 // Implement a grayscale-specific adaptive histogram equalization
 void applyHistogramEqualization(BYTE* grayImageData, int width, int height) {
     if (!grayImageData || width <= 0 || height <= 0) return;
@@ -549,8 +552,22 @@ void displayFrameImage(const VideoFrame& frame, int frameNumber) {
     const int bytesPerChannel = 178; // From SAV/EAV analysis (1488 bits / 8 = 186 bytes, minus sync = 178)
     const int width = bytesPerChannel * 4; // All 4 channels interleaved = 712 pixels
     
-    // Calculate image dimensions
+    // Calculate image dimensions with safety limits
     int height = static_cast<int>(frame.lines.size());
+    // Limit excessive image height to prevent memory issues
+    const int MAX_HEIGHT = 2000;
+    if (height > MAX_HEIGHT) {
+        std::cout << "Warning: Limiting frame height from " << height << " to " << MAX_HEIGHT << " lines" << std::endl;
+        height = MAX_HEIGHT;
+    }
+    
+    // Safety check for memory allocation
+    size_t requiredMemory = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (requiredMemory > 100 * 1024 * 1024) { // 100MB limit
+        std::cout << "Warning: Image too large to display safely (" << 
+                  (requiredMemory / (1024 * 1024)) << " MB). Skipping display." << std::endl;
+        return;
+    }
     
     if (width == 0) {
         std::cout << "Warning: Line has no data, cannot create image" << std::endl;
@@ -655,21 +672,41 @@ void displayFrameImage(const VideoFrame& frame, int frameNumber) {
                 continue;  // Skip if any channel is missing
             }
             
-            // Use proper channel data for each pixel in the interleaved format
-            for (int x = 0; x < bytesPerChannel; x++) {
-                if (x >= line.channel1.size()) break;
-                
-                // Use all 4 channels to fill the pixels
-                g_displayBuffer[y * width + (x * 4)]     = line.channel1[x];
-                g_displayBuffer[y * width + (x * 4 + 1)] = line.channel2[x];
-                g_displayBuffer[y * width + (x * 4 + 2)] = line.channel3[x];
-                g_displayBuffer[y * width + (x * 4 + 3)] = line.channel4[x];
+            // Calculate max pixel value for this line
+            size_t ch1Size = line.channel1.size();
+            size_t ch2Size = line.channel2.size();
+            size_t ch3Size = line.channel3.size();
+            size_t ch4Size = line.channel4.size();
+            size_t pixelsPerChannel = ch1Size;
+            if (ch2Size < pixelsPerChannel) pixelsPerChannel = ch2Size;
+            if (ch3Size < pixelsPerChannel) pixelsPerChannel = ch3Size;
+            if (ch4Size < pixelsPerChannel) pixelsPerChannel = ch4Size;
+            
+            // Interleave channel data according to the specified pattern
+            // ch1: pixels 0, 4, 8, ...
+            // ch2: pixels 1, 5, 9, ...
+            // ch3: pixels 2, 6, 10, ...
+            // ch4: pixels 3, 7, 11, ...
+            for (size_t i = 0; i < pixelsPerChannel; i++) {
+                // Each value from channel1 goes to position 0, 4, 8, ...
+                g_displayBuffer[y * width + (i * 4)]     = line.channel1[i];
+                // Each value from channel2 goes to position 1, 5, 9, ...
+                g_displayBuffer[y * width + (i * 4 + 1)] = line.channel2[i];
+                // Each value from channel3 goes to position 2, 6, 10, ...
+                g_displayBuffer[y * width + (i * 4 + 2)] = line.channel3[i];
+                // Each value from channel4 goes to position 3, 7, 11, ...
+                g_displayBuffer[y * width + (i * 4 + 3)] = line.channel4[i];
             }
         }
     }
     
-    // For grayscale, we can directly apply histogram equalization
+    // Apply histogram equalization only if enabled
+    if (g_applyHistogramEqualization) {
+        std::cout << "Applying histogram equalization to enhance image contrast..." << std::endl;
     applyHistogramEqualization(g_displayBuffer, width, height);
+    } else {
+        std::cout << "Displaying raw image data without enhancement..." << std::endl;
+    }
     
     // Force window to repaint
     InvalidateRect(g_displayWindow, NULL, FALSE);
@@ -678,6 +715,24 @@ void displayFrameImage(const VideoFrame& frame, int frameNumber) {
     // Process any pending messages
     MSG msg;
     while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+        // Add keyboard handler for toggling histogram equalization
+        if (msg.message == WM_KEYDOWN) {
+            if (msg.wParam == 'H' || msg.wParam == 'h') {
+                g_applyHistogramEqualization = !g_applyHistogramEqualization;
+                std::cout << "Histogram equalization " 
+                          << (g_applyHistogramEqualization ? "enabled" : "disabled") << std::endl;
+                
+                // Re-process the current image with the new setting
+                if (g_applyHistogramEqualization) {
+                    applyHistogramEqualization(g_displayBuffer, width, height);
+                } else {
+                    // Redisplay the image (we'll need to reload the original data)
+                    // For simplicity, just signal to redraw for now
+                }
+                InvalidateRect(g_displayWindow, NULL, FALSE);
+            }
+        }
+        
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         
@@ -1041,24 +1096,24 @@ void analyzeData(bool quickAnalysis) {
     if (!lineGaps.empty()) {
         std::sort(lineGaps.begin(), lineGaps.end());
         
-        int currentCount = 1;
-        int maxCount = 1;
+            int currentCount = 1;
+            int maxCount = 1;
         int mostCommonGap = lineGaps[0];
-        
+            
         for (size_t i = 1; i < lineGaps.size(); i++) {
             if (lineGaps[i] == lineGaps[i-1]) {
-                currentCount++;
-            } else {
-                if (currentCount > maxCount) {
-                    maxCount = currentCount;
+                    currentCount++;
+                } else {
+                    if (currentCount > maxCount) {
+                        maxCount = currentCount;
                     mostCommonGap = lineGaps[i-1];
+                    }
+                    currentCount = 1;
                 }
-                currentCount = 1;
             }
-        }
-        
-        // Check the last sequence
-        if (currentCount > maxCount) {
+            
+            // Check the last sequence
+            if (currentCount > maxCount) {
             mostCommonGap = lineGaps.back();
         }
         
@@ -1088,85 +1143,154 @@ void analyzeData(bool quickAnalysis) {
     // Create frame(s) based on the detected boundaries
     std::vector<VideoFrame> frames;
 
+    // Add memory safety check
+    size_t totalEstimatedLines = 0;
     for (size_t frameIdx = 0; frameIdx < frameStartIndices.size(); frameIdx++) {
         size_t startIdx = frameStartIndices[frameIdx];
         size_t endIdx = (frameIdx < frameStartIndices.size() - 1) ? 
                         frameStartIndices[frameIdx + 1] : savPositions.size();
         
         int frameRows = static_cast<int>(endIdx - startIdx);
-        std::cout << "Frame " << (frameIdx + 1) << " has " << frameRows << " rows" << std::endl;
+        totalEstimatedLines += frameRows;
         
-        // Create frame
-        VideoFrame frame;
-        frame.frameNumber = frameIdx + 1;
-        
-        for (size_t i = startIdx; i < endIdx; i++) {
-            if (i >= savPositions.size()) break;
-            
-        VideoLine line;
-            line.startIndex = savPositions[i];
-            
-            // Find corresponding EAV
-            size_t eavIdx = 0;
-            for (size_t j = 0; j < eavPositions.size(); j++) {
-                if (eavPositions[j] > savPositions[i]) {
-                    eavIdx = j;
+        // Limit total lines to prevent memory issues
+        if (totalEstimatedLines > 5000) {
+            std::cout << "Warning: Limiting frame analysis to prevent memory overflow." << std::endl;
+            // If we need to limit frames, keep only up to the current frame index
+            frameStartIndices.resize(frameIdx + 1);
                     break;
-                }
-            }
+        }
+    }
+
+    // In the analyzeData function, replace the frame creation and display section with this code:
+
+    std::cout << "\nProcessing and displaying " << frameStartIndices.size() << " frames one at a time..." << std::endl;
+    
+    try {
+        // Process each frame individually
+        for (size_t frameIdx = 0; frameIdx < frameStartIndices.size(); frameIdx++) {
+            size_t startIdx = frameStartIndices[frameIdx];
+            size_t endIdx = (frameIdx < frameStartIndices.size() - 1) ? 
+                            frameStartIndices[frameIdx + 1] : savPositions.size();
             
-            if (eavIdx < eavPositions.size()) {
-                line.endIndex = eavPositions[eavIdx];
-            } else {
-                // If no EAV found, use SAV + estimated active video width
-                line.endIndex = savPositions[i] + 1456; // Using detected row width in bits
-            }
+            int frameRows = static_cast<int>(endIdx - startIdx);
+            std::cout << "Processing frame " << (frameIdx + 1) << " with " << frameRows << " rows" << std::endl;
             
-            // Convert from bit positions to byte positions in the raw data buffer
-            size_t byteOffset = (savPositions[i] / 32) * 4; // 32 bits = 4 bytes
-            size_t lineLength = normalLineGap; // Use calculated normal line gap
+            // Create a single frame
+            VideoFrame frame;
+            frame.frameNumber = static_cast<int>(frameIdx + 1);
+            frame.lines.reserve(frameRows); // Reserve space but don't allocate yet
             
-            if (byteOffset + lineLength <= g_analysisBuffer.size()) {
-                // Extract the line data
-            line.channel1.assign(
-                    g_analysisBuffer.begin() + byteOffset,
-                    g_analysisBuffer.begin() + byteOffset + lineLength
-            );
+            // Process lines in smaller batches to avoid memory issues
+            const size_t BATCH_SIZE = 100; // Process 100 lines at a time
             
-            // Create interleaved data for display
-                line.interleavedData.resize(lineLength * 4);
-                for (size_t x = 0; x < lineLength; x++) {
-                    size_t idx = x;
-                    if (idx < line.channel1.size()) {
-                        line.interleavedData[x * 4] = line.channel1[idx];
-                        line.interleavedData[x * 4 + 1] = line.channel1[idx];
-                        line.interleavedData[x * 4 + 2] = line.channel1[idx];
-                line.interleavedData[x * 4 + 3] = 255;  // Full alpha
-                    }
-                }
+            for (size_t batchStart = startIdx; batchStart < endIdx; batchStart += BATCH_SIZE) {
+                size_t batchEnd = batchStart + BATCH_SIZE;
+                if (batchEnd > endIdx) batchEnd = endIdx;
                 
-                frame.lines.push_back(line);
+                size_t batchStartLine = batchStart - startIdx;
+                size_t batchEndLine = batchEnd - startIdx;
+                
+                std::cout << "  Processing batch of lines " << batchStartLine << " to " 
+                          << batchEndLine << " of frame " << (frameIdx + 1) << std::endl;
+                
+                // Process each line in this batch
+                for (size_t i = batchStart; i < batchEnd; i++) {
+                    if (i >= savPositions.size()) break;
+                    
+                    VideoLine line;
+                    line.startIndex = savPositions[i];
+                    
+                    // Find corresponding EAV
+                    size_t eavIdx = 0;
+                    for (size_t j = 0; j < eavPositions.size(); j++) {
+                        if (eavPositions[j] > savPositions[i]) {
+                            eavIdx = j;
+                            break;
+                        }
+                    }
+                    
+                    if (eavIdx < eavPositions.size()) {
+                        line.endIndex = eavPositions[eavIdx];
+                    } else {
+                        // If no EAV found, use SAV + estimated active video width
+                        line.endIndex = savPositions[i] + 1456; // Using detected row width in bits
+                    }
+                    
+                    // Extract data directly from the deinterleaved channels
+                    size_t dataStartBit = savPositions[i] + 32;  // Skip SAV marker (32 bits)
+                    size_t dataEndBit = (eavIdx < eavPositions.size()) ? 
+                                       eavPositions[eavIdx] : (savPositions[i] + 1456);
+                    
+                    // Initialize vectors for each channel's data with proper capacity
+                    size_t expectedBytes = (dataEndBit - dataStartBit + 7) / 8;
+                    line.channel1.reserve(expectedBytes);
+                    line.channel2.reserve(expectedBytes);
+                    line.channel3.reserve(expectedBytes);
+                    line.channel4.reserve(expectedBytes);
+                    
+                    // Extract data from each channel and convert bits to bytes
+                    for (size_t ch = 0; ch < channelBits.size(); ch++) {
+                        std::vector<uint8_t>* targetChannel = nullptr;
+                        switch (ch) {
+                            case 0: targetChannel = &line.channel1; break;
+                            case 1: targetChannel = &line.channel2; break;
+                            case 2: targetChannel = &line.channel3; break;
+                            case 3: targetChannel = &line.channel4; break;
+                            default: continue; // Shouldn't happen
+                        }
+                        
+                        // Convert bits to bytes
+                        for (size_t pos = dataStartBit; pos < dataEndBit; pos += 8) {
+                            if (pos + 8 > channelBits[ch].size()) break;
+                            
+                            uint8_t byte = 0;
+                            for (size_t bit = 0; bit < 8; bit++) {
+                                // Big-endian: most significant bit first
+                                byte |= (channelBits[ch][pos + bit] ? 1 : 0) << (7 - bit);
+                            }
+                            targetChannel->push_back(byte);
+                        }
+                    }
+                    
+                    frame.lines.push_back(line);
+                }
             }
+            
+            if (!frame.lines.empty()) {
+                std::cout << "Frame " << frameIdx + 1 << " has " << frame.lines.size() << " lines" << std::endl;
+                
+                // Create a special display function that only displays this one frame
+                std::cout << "Displaying frame " << frameIdx + 1 << "..." << std::endl;
+                
+                // Display this frame
+                std::vector<VideoFrame> singleFrame;
+                singleFrame.push_back(frame);
+                displayAllFrames(singleFrame);
+                
+                // Clear memory immediately
+                singleFrame.clear();
+            }
+            
+            // Force cleanup of this frame's data before processing the next frame
+            frame.lines.clear();
+            frame.lines.shrink_to_fit();
+            
+            // Force a garbage collection to free memory before next frame
+            std::cout << "Memory cleared after frame " << frameIdx + 1 << std::endl;
         }
         
-        if (!frame.lines.empty()) {
-            frames.push_back(frame);
-        }
+        std::cout << "All " << frameStartIndices.size() << " frames have been processed and displayed" << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error during frame processing: " << e.what() << std::endl;
+        // Continue with the program despite the error
+    } catch (...) {
+        std::cerr << "Unknown error during frame processing" << std::endl;
+        // Continue with the program despite the error
     }
-
-    std::cout << "\nCreated " << frames.size() << " frames from detected boundaries" << std::endl;
-    for (size_t i = 0; i < frames.size(); i++) {
-        std::cout << "Frame " << (i + 1) << ": " << frames[i].lines.size() << " lines" << std::endl;
-    }
-
-    // Display all frames
-    if (!frames.empty()) {
-    displayAllFrames(frames);
-    } else {
-        std::cout << "Failed to create valid frames from data" << std::endl;
-    }
-
-    // Return from function since we've handled the frame creation
+    
+    // Return from function
     return;
 }
 
@@ -1603,20 +1727,76 @@ int main() {
         std::cout << "Shutting down watchdog thread..." << std::endl;
         Sleep(2000);  // Give watchdog thread time to exit cleanly
 
-        // Properly clean up resources with null checks
-        for (int i = 0; i < NUM_BUFFERS; i++) {
-            if (ovLapArray[i].hEvent != NULL) {
-                CloseHandle(ovLapArray[i].hEvent);
+        std::cout << "Starting cleanup..." << std::endl;
+        
+        // Safe cleanup - handle each step independently to avoid cascading errors
+        try {
+            if (bulkInEndpoint) {
+                std::cout << "Aborting any pending transfers..." << std::endl;
+                bulkInEndpoint->Abort();
+                g_bulkInEndpoint = nullptr;  // Clear global pointer
             }
-            if (buffers[i] != NULL) {
-                _aligned_free(buffers[i]);
-            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error during endpoint abort: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error during endpoint abort. Continuing cleanup..." << std::endl;
         }
-        delete[] ovLapArray;
-        delete[] buffers;
-
-        USBDevice->Close();
-        delete USBDevice;
+        
+        try {
+            if (USBDevice) {
+                std::cout << "Closing USB device..." << std::endl;
+                USBDevice->Close();
+                delete USBDevice;
+                USBDevice = nullptr;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error closing USB device: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error closing USB device. Continuing cleanup..." << std::endl;
+        }
+        
+        try {
+            // Clean up events
+            std::cout << "Closing event handles..." << std::endl;
+            for (int i = 0; i < NUM_BUFFERS; i++) {
+                if (ovLapArray && ovLapArray[i].hEvent) {
+                    CloseHandle(ovLapArray[i].hEvent);
+                    ovLapArray[i].hEvent = NULL;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error closing event handles: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error closing event handles. Continuing cleanup..." << std::endl;
+        }
+        
+        try {
+            // Free aligned memory
+            std::cout << "Freeing buffer memory..." << std::endl;
+            for (int i = 0; i < NUM_BUFFERS; i++) {
+                if (buffers && buffers[i]) {
+                    _aligned_free(buffers[i]);
+                    buffers[i] = NULL;
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Error freeing buffer memory: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error freeing buffer memory. Continuing cleanup..." << std::endl;
+        }
+        
+        try {
+            // Delete arrays
+            std::cout << "Deleting array containers..." << std::endl;
+            delete[] ovLapArray;
+            delete[] buffers;
+            ovLapArray = nullptr;
+            buffers = nullptr;
+        } catch (const std::exception& e) {
+            std::cerr << "Error deleting arrays: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error deleting arrays. Continuing cleanup..." << std::endl;
+        }
 
         // Calculate and report overall performance
         LARGE_INTEGER endTime;
@@ -1631,30 +1811,68 @@ int main() {
         std::cout << "Data is now stored in memory buffer for analysis. Buffer size: " 
             << g_analysisBuffer.size() << " bytes." << std::endl;
             
-        // Analyze the collected data with quick analysis mode for faster results
-        bool quickAnalysis = false; // Set to true for quick analysis, false for full analysis
-        analyzeData(quickAnalysis);
+        // Analyze the collected data
+        try {
+            bool quickAnalysis = false; // Set to false to do full analysis as requested
+            analyzeData(quickAnalysis);
+        } catch (const std::exception& e) {
+            std::cerr << "Error during data analysis: " << e.what() << std::endl;
+        } catch (...) {
+            std::cerr << "Unknown error during data analysis" << std::endl;
+        }
 
         return 0;
     }
     catch (const std::exception& e) {
         std::cerr << "Exception: " << e.what() << std::endl;
 
-        // Cleanup on error with proper null checks
-        for (int i = 0; i < NUM_BUFFERS; i++) {
-            if (ovLapArray[i].hEvent != NULL) {
-                CloseHandle(ovLapArray[i].hEvent);
+        // Safe cleanup with detailed error handling
+        try {
+            // Abort any pending USB operations
+            if (bulkInEndpoint) {
+                bulkInEndpoint->Abort();
             }
-            if (buffers[i] != NULL) {
-                _aligned_free(buffers[i]);
-            }
+        } catch (...) {
+            std::cerr << "Error aborting endpoint operations during cleanup" << std::endl;
         }
-        delete[] ovLapArray;
-        delete[] buffers;
+        
+        try {
+            // Clean up any resources that might have been allocated
+            for (int i = 0; i < NUM_BUFFERS; i++) {
+                if (ovLapArray && ovLapArray[i].hEvent) {
+                    CloseHandle(ovLapArray[i].hEvent);
+                    ovLapArray[i].hEvent = NULL;
+                }
+            }
+        } catch (...) {
+            std::cerr << "Error closing event handles during cleanup" << std::endl;
+        }
+        
+        try {
+            for (int i = 0; i < NUM_BUFFERS; i++) {
+                if (buffers && buffers[i]) {
+                    _aligned_free(buffers[i]);
+                    buffers[i] = NULL;
+                }
+            }
+        } catch (...) {
+            std::cerr << "Error freeing buffer memory during cleanup" << std::endl;
+        }
+        
+        try {
+            delete[] ovLapArray;
+            delete[] buffers;
+        } catch (...) {
+            std::cerr << "Error deleting arrays during cleanup" << std::endl;
+        }
 
-        if (USBDevice) {
-            USBDevice->Close();
-            delete USBDevice;
+        try {
+            if (USBDevice) {
+                USBDevice->Close();
+                delete USBDevice;
+            }
+        } catch (...) {
+            std::cerr << "Error closing USB device during cleanup" << std::endl;
         }
 
         return -1;
