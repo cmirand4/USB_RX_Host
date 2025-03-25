@@ -140,7 +140,7 @@ int main() {
     // const int NUM_BUFFERS = 3;       // Moved to global scope
 
     // Calculate total bytes to transfer based on buffer size (approximately 100MB)
-    const long KB_TO_TRANSFER = 100000 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // Adjust to be a multiple of buffer size
+    const long KB_TO_TRANSFER = 10000 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // Adjust to be a multiple of buffer size
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
 
     // For 150 MB/s data rate
@@ -211,7 +211,7 @@ int main() {
 
     try {
         // Define filename separately for easy modification
-        std::string fileName = "camera16.bin";
+        std::string fileName = "camera17.bin";
 
         std::string outputFilePath;
         char hostname[MAX_COMPUTERNAME_LENGTH + 1];
