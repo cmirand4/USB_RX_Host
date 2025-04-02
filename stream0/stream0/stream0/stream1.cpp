@@ -20,8 +20,9 @@ CCyBulkEndPoint* g_bulkInEndpoint = nullptr;  // Global pointer to the endpoint
 
 // Global constants
 const long BUFFER_SIZE = 65280;  // 60KB = 4 * 61440 bytes (multiple of 16KB)
-const int NUM_BUFFERS = 3;       // 3 buffers � 61440 bytes =  bytes (~191.25KB total)
+const int NUM_BUFFERS = 3;       // 3 buffers * 61440 bytes =  bytes (~191.25KB total)
 const DWORD FX3_BUFFER_TIMEOUT = 1000;  // Longer timeout for initial transfers
+const bool DEFAULT_ENABLE_FLUSHING = false; // Default behavior
 
 // Watchdog function to monitor progress
 void watchdogThread() {
@@ -128,7 +129,7 @@ void resetEndpoint() {
     }
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "Starting program..." << std::endl;
 
     // Start watchdog thread
@@ -140,7 +141,7 @@ int main() {
     // const int NUM_BUFFERS = 3;       // Moved to global scope
 
     // Calculate total bytes to transfer based on buffer size (approximately 100MB)
-    const long KB_TO_TRANSFER = 10000 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // Adjust to be a multiple of buffer size
+    const long KB_TO_TRANSFER = 20000 * 1024 / BUFFER_SIZE * BUFFER_SIZE / 1024; // Adjust to be a multiple of buffer size
     const long TOTAL_BYTES_TO_TRANSFER = KB_TO_TRANSFER * 1024;
 
     // For 150 MB/s data rate
@@ -211,7 +212,7 @@ int main() {
 
     try {
         // Define filename separately for easy modification
-        std::string fileName = "camera17.bin";
+        std::string fileName = "camera23.bin";
 
         std::string outputFilePath;
         char hostname[MAX_COMPUTERNAME_LENGTH + 1];
@@ -328,6 +329,25 @@ int main() {
         QueryPerformanceCounter(&lastDataTime);
         bool dataReceivedSinceLastCheck = false;
 
+        // Add this before the transfer loop starts
+        bool enableFlushing = DEFAULT_ENABLE_FLUSHING;
+
+        // Parse command line arguments if any
+        if (argc > 1) {
+            for (int i = 1; i < argc; i++) {
+                std::string arg = argv[i];
+                if (arg == "--no-flush" || arg == "-nf") {
+                    enableFlushing = false;
+                    std::cout << "File flushing disabled" << std::endl;
+                }
+                else if (arg == "--flush" || arg == "-f") {
+                    enableFlushing = true;
+                    std::cout << "File flushing enabled" << std::endl;
+                }
+                // ... any other command line options
+            }
+        }
+
         // Main transfer loop
         while (totalTransferred < TOTAL_BYTES_TO_TRANSFER) {
             // Increment heartbeat counter to show the loop is still running
@@ -351,7 +371,7 @@ int main() {
 
                 // Reduce timeout after several successful transfers
                 if (consecutiveSuccesses > 5 && currentTimeout > 50) {
-                    currentTimeout = 50;  // Reduce to 50ms after success
+                    currentTimeout = 50;  // 
                 }
             }
             else if (waitResult == WAIT_TIMEOUT) {
@@ -454,7 +474,7 @@ int main() {
 
                 // Write data to file without any real-time analysis
                 outFile.write(reinterpret_cast<char*>(buffers[currentBuffer]), bytesToWrite);
-                if (totalTransferred % (32 * 1024 * 1024) == 0) {  // Flush every 32MB
+                if (enableFlushing && totalTransferred % (32 * 1024 * 1024) == 0) {  // Flush every 32MB
                     outFile.flush();
                 }
                 totalTransferred += bytesToWrite;
